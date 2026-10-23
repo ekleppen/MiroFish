@@ -663,5 +663,104 @@
     "llmSelectAgentFailed": "LLM agent selection failed, using default selection: {error}",
     "generateInterviewQuestionsFailed": "Failed to generate interview questions: {error}",
     "generateInterviewSummaryFailed": "Failed to generate interview summary: {error}"
+  },
+  "backend": {
+    "simulationRunner": {
+      "alreadyRunning": "Simulation is already running or finishing: {id}",
+      "graphIdRequired": "graph_id is required when graph memory updates are enabled",
+      "graphUpdaterInitFailed": "Failed to initialize the Zep graph updater: {error}",
+      "scriptNotFound": "Script not found: {path}",
+      "graphCleanupFailed": "Zep graph write cleanup failed: {error}",
+      "processTerminateFailed": "Failed to terminate child process: {error}",
+      "logCloseFailed": "Failed to close log: {error}",
+      "processExitError": "Process exit code: {code}, error: {error}",
+      "graphWriteIncomplete": "Zep graph writes did not fully complete: {error}",
+      "notRunning": "Simulation is not running: {id}, status={status}",
+      "stopPending": "Simulation is still stopping; graph writes did not complete within {seconds}s",
+      "stopFailed": "Failed to stop simulation",
+      "stopNotTerminal": "Simulation stop did not reach a terminal state: {id}, status={status}",
+      "simDirNotFound": "Simulation directory does not exist; nothing to clean up",
+      "deleteFileFailed": "Failed to delete {file}: {error}",
+      "envNotRunningForInterview": "Simulation environment is not running or has been closed; cannot run Interview: {id}",
+      "configNotFoundForSim": "Simulation config not found: {id}",
+      "noAgentsInConfig": "No Agents in simulation config: {id}",
+      "envAlreadyClosed": "Environment is already closed",
+      "closeEnvSent": "Environment close command sent",
+      "closeEnvSentTimeout": "Environment close command sent (response timed out; the environment may be shutting down)"
+    },
+    "simulationManager": {
+      "noEntitiesFound": "No matching entities found; please check that the graph was built correctly",
+      "unsupportedPlatform": "Unsupported platform: {platform}",
+      "runInstructions": "1. Activate the conda environment: conda activate MiroFish\n2. Run the simulation (scripts are in {scriptsDir}):\n   - Twitter only: python {scriptsDir}/run_twitter_simulation.py --config {configPath}\n   - Reddit only: python {scriptsDir}/run_reddit_simulation.py --config {configPath}\n   - Both platforms in parallel: python {scriptsDir}/run_parallel_simulation.py --config {configPath}"
+    },
+    "simulationIpc": {
+      "commandTimeout": "Timed out waiting for command response ({timeout}s)"
+    },
+    "reportAgent": {
+      "defaultReportTitle": "Simulation Analysis Report",
+      "fallbackOutlineTitle": "Future Prediction Report",
+      "fallbackOutlineSummary": "Analysis of future trends and risks based on simulation predictions",
+      "fallbackSectionScenario": "Prediction Scenario and Key Findings",
+      "fallbackSectionBehavior": "Predicted Group Behavior Analysis",
+      "fallbackSectionOutlook": "Trend Outlook and Risk Warnings"
+    },
+    "simConfigGenerator": {
+      "defaultTimeConfigReasoning": "Using the default Chinese daily-routine config (1 hour per round)",
+      "defaultEventConfigReasoning": "Using the default config"
+    },
+    "apiGraph": {
+      "buildGraphTask": "Build graph: {name}"
+    },
+    "apiSimulation": {
+      "prepareFailed": "Simulation preparation failed"
+    },
+    "memoryUpdater": {
+      "createPostWithContent": "published a post: \"{content}\"",
+      "createPost": "published a post",
+      "likePostWithAuthorContent": "liked {author}'s post: \"{content}\"",
+      "likePostWithContent": "liked a post: \"{content}\"",
+      "likePostWithAuthor": "liked a post by {author}",
+      "likePost": "liked a post",
+      "dislikePostWithAuthorContent": "disliked {author}'s post: \"{content}\"",
+      "dislikePostWithContent": "disliked a post: \"{content}\"",
+      "dislikePostWithAuthor": "disliked a post by {author}",
+      "dislikePost": "disliked a post",
+      "repostWithAuthorContent": "reposted {author}'s post: \"{content}\"",
+      "repostWithContent": "reposted a post: \"{content}\"",
+      "repostWithAuthor": "reposted a post by {author}",
+      "repost": "reposted a post",
+      "quotePostWithAuthorContent": "quoted {author}'s post \"{content}\"",
+      "quotePostWithContent": "quoted a post \"{content}\"",
+      "quotePostWithAuthor": "quoted a post by {author}",
+      "quotePost": "quoted a post",
+      "quoteComment": ", commenting: \"{quote}\"",
+      "followWithUser": "followed user \"{user}\"",
+      "follow": "followed a user",
+      "commentWithAuthorPost": "commented on {author}'s post \"{post}\": \"{content}\"",
+      "commentWithPost": "commented on the post \"{post}\": \"{content}\"",
+      "commentWithAuthor": "commented on {author}'s post: \"{content}\"",
+      "commentWithContent": "commented: \"{content}\"",
+      "comment": "posted a comment",
+      "likeCommentWithAuthorContent": "liked {author}'s comment: \"{content}\"",
+      "likeCommentWithContent": "liked a comment: \"{content}\"",
+      "likeCommentWithAuthor": "liked a comment by {author}",
+      "likeComment": "liked a comment",
+      "dislikeCommentWithAuthorContent": "disliked {author}'s comment: \"{content}\"",
+      "dislikeCommentWithContent": "disliked a comment: \"{content}\"",
+      "dislikeCommentWithAuthor": "disliked a comment by {author}",
+      "dislikeComment": "disliked a comment",
+      "searchWithQuery": "searched for \"{query}\"",
+      "search": "performed a search",
+      "searchUserWithQuery": "searched for user \"{query}\"",
+      "searchUser": "searched for users",
+      "muteWithUser": "muted user \"{user}\"",
+      "mute": "muted a user",
+      "generic": "performed a {action} action"
+    },
+    "profileGenerator": {
+      "personaFallback": "{name} is a {type}.",
+      "defaultCountry": "China",
+      "profileProgress": "Completed {current}/{total}: {name} ({type})"
+    }
   }
 }

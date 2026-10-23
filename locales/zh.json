@@ -663,5 +663,104 @@
     "llmSelectAgentFailed": "LLM选择Agent失败，使用默认选择: {error}",
     "generateInterviewQuestionsFailed": "生成采访问题失败: {error}",
     "generateInterviewSummaryFailed": "生成采访摘要失败: {error}"
+  },
+  "backend": {
+    "simulationRunner": {
+      "alreadyRunning": "模拟已在运行或结束处理中: {id}",
+      "graphIdRequired": "启用图谱记忆更新时必须提供 graph_id",
+      "graphUpdaterInitFailed": "Zep图谱更新器初始化失败: {error}",
+      "scriptNotFound": "脚本不存在: {path}",
+      "graphCleanupFailed": "Zep图谱写入清理失败: {error}",
+      "processTerminateFailed": "子进程终止失败: {error}",
+      "logCloseFailed": "日志关闭失败: {error}",
+      "processExitError": "进程退出码: {code}, 错误: {error}",
+      "graphWriteIncomplete": "Zep图谱写入未完整完成: {error}",
+      "notRunning": "模拟未在运行: {id}, status={status}",
+      "stopPending": "模拟仍在停止中，图谱写入未在 {seconds}s 内完成",
+      "stopFailed": "模拟停止失败",
+      "stopNotTerminal": "模拟停止未达到终态: {id}, status={status}",
+      "simDirNotFound": "模拟目录不存在，无需清理",
+      "deleteFileFailed": "删除 {file} 失败: {error}",
+      "envNotRunningForInterview": "模拟环境未运行或已关闭，无法执行Interview: {id}",
+      "configNotFoundForSim": "模拟配置不存在: {id}",
+      "noAgentsInConfig": "模拟配置中没有Agent: {id}",
+      "envAlreadyClosed": "环境已经关闭",
+      "closeEnvSent": "环境关闭命令已发送",
+      "closeEnvSentTimeout": "环境关闭命令已发送（等待响应超时，环境可能正在关闭）"
+    },
+    "simulationManager": {
+      "noEntitiesFound": "没有找到符合条件的实体，请检查图谱是否正确构建",
+      "unsupportedPlatform": "不支持的平台: {platform}",
+      "runInstructions": "1. 激活conda环境: conda activate MiroFish\n2. 运行模拟 (脚本位于 {scriptsDir}):\n   - 单独运行Twitter: python {scriptsDir}/run_twitter_simulation.py --config {configPath}\n   - 单独运行Reddit: python {scriptsDir}/run_reddit_simulation.py --config {configPath}\n   - 并行运行双平台: python {scriptsDir}/run_parallel_simulation.py --config {configPath}"
+    },
+    "simulationIpc": {
+      "commandTimeout": "等待命令响应超时 ({timeout}秒)"
+    },
+    "reportAgent": {
+      "defaultReportTitle": "模拟分析报告",
+      "fallbackOutlineTitle": "未来预测报告",
+      "fallbackOutlineSummary": "基于模拟预测的未来趋势与风险分析",
+      "fallbackSectionScenario": "预测场景与核心发现",
+      "fallbackSectionBehavior": "人群行为预测分析",
+      "fallbackSectionOutlook": "趋势展望与风险提示"
+    },
+    "simConfigGenerator": {
+      "defaultTimeConfigReasoning": "使用默认中国人作息配置（每轮1小时）",
+      "defaultEventConfigReasoning": "使用默认配置"
+    },
+    "apiGraph": {
+      "buildGraphTask": "构建图谱: {name}"
+    },
+    "apiSimulation": {
+      "prepareFailed": "模拟准备失败"
+    },
+    "memoryUpdater": {
+      "createPostWithContent": "发布了一条帖子：「{content}」",
+      "createPost": "发布了一条帖子",
+      "likePostWithAuthorContent": "点赞了{author}的帖子：「{content}」",
+      "likePostWithContent": "点赞了一条帖子：「{content}」",
+      "likePostWithAuthor": "点赞了{author}的一条帖子",
+      "likePost": "点赞了一条帖子",
+      "dislikePostWithAuthorContent": "踩了{author}的帖子：「{content}」",
+      "dislikePostWithContent": "踩了一条帖子：「{content}」",
+      "dislikePostWithAuthor": "踩了{author}的一条帖子",
+      "dislikePost": "踩了一条帖子",
+      "repostWithAuthorContent": "转发了{author}的帖子：「{content}」",
+      "repostWithContent": "转发了一条帖子：「{content}」",
+      "repostWithAuthor": "转发了{author}的一条帖子",
+      "repost": "转发了一条帖子",
+      "quotePostWithAuthorContent": "引用了{author}的帖子「{content}」",
+      "quotePostWithContent": "引用了一条帖子「{content}」",
+      "quotePostWithAuthor": "引用了{author}的一条帖子",
+      "quotePost": "引用了一条帖子",
+      "quoteComment": "，并评论道：「{quote}」",
+      "followWithUser": "关注了用户「{user}」",
+      "follow": "关注了一个用户",
+      "commentWithAuthorPost": "在{author}的帖子「{post}」下评论道：「{content}」",
+      "commentWithPost": "在帖子「{post}」下评论道：「{content}」",
+      "commentWithAuthor": "在{author}的帖子下评论道：「{content}」",
+      "commentWithContent": "评论道：「{content}」",
+      "comment": "发表了评论",
+      "likeCommentWithAuthorContent": "点赞了{author}的评论：「{content}」",
+      "likeCommentWithContent": "点赞了一条评论：「{content}」",
+      "likeCommentWithAuthor": "点赞了{author}的一条评论",
+      "likeComment": "点赞了一条评论",
+      "dislikeCommentWithAuthorContent": "踩了{author}的评论：「{content}」",
+      "dislikeCommentWithContent": "踩了一条评论：「{content}」",
+      "dislikeCommentWithAuthor": "踩了{author}的一条评论",
+      "dislikeComment": "踩了一条评论",
+      "searchWithQuery": "搜索了「{query}」",
+      "search": "进行了搜索",
+      "searchUserWithQuery": "搜索了用户「{query}」",
+      "searchUser": "搜索了用户",
+      "muteWithUser": "屏蔽了用户「{user}」",
+      "mute": "屏蔽了一个用户",
+      "generic": "执行了{action}操作"
+    },
+    "profileGenerator": {
+      "personaFallback": "{name}是一个{type}。",
+      "defaultCountry": "中国",
+      "profileProgress": "已完成 {current}/{total}: {name}（{type}）"
+    }
   }
 }

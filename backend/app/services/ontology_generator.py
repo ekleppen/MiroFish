@@ -1,6 +1,6 @@
 """
-本体生成服务
-接口1：分析文本内容，生成适合社会模拟的实体和关系类型定义
+Ontology generation service
+Endpoint 1: analyze text content and generate entity and relationship type definitions suited to social simulation
 """
 
 import json
@@ -20,14 +20,14 @@ logger = logging.getLogger(__name__)
 
 
 def _to_pascal_case(name: str) -> str:
-    """将任意格式的名称转换为 PascalCase（如 'works_for' -> 'WorksFor', 'person' -> 'Person'）"""
-    # 按非字母数字字符分割
+    """Convert a name in any format to PascalCase (e.g. 'works_for' -> 'WorksFor', 'person' -> 'Person')"""
+    # Split on non-alphanumeric characters
     parts = re.split(r'[^a-zA-Z0-9]+', name)
-    # 再按 camelCase 边界分割（如 'camelCase' -> ['camel', 'Case']）
+    # Then split on camelCase boundaries (e.g. 'camelCase' -> ['camel', 'Case'])
     words = []
     for part in parts:
         words.extend(re.sub(r'([a-z])([A-Z])', r'\1_\2', part).split('_'))
-    # 每个词首字母大写，过滤空串
+    # Capitalize each word, skipping empty strings
     result = ''.join(word.capitalize() for word in words if word)
     return result if result else 'Unknown'
 
@@ -44,7 +44,7 @@ def _to_upper_snake_case(name: str) -> str:
     return normalized
 
 
-# 本体生成的系统提示词
+# System prompt for ontology generation
 ONTOLOGY_SYSTEM_PROMPT = """你是一个专业的知识图谱本体设计专家。你的任务是分析给定的文本内容和模拟需求，设计适合**社交媒体舆论模拟**的实体类型和关系类型。
 
 **重要：你必须输出有效的JSON格式数据，不要输出任何其他内容。**
@@ -193,8 +193,8 @@ B. **具体类型（8个，根据文本内容设计）**：
 
 class OntologyGenerator:
     """
-    本体生成器
-    分析文本内容，生成实体和关系类型定义
+    Ontology generator
+    Analyzes text content and generates entity and relationship type definitions
     """
     
     def __init__(self, llm_client: Optional[LLMClient] = None):
@@ -207,17 +207,17 @@ class OntologyGenerator:
         additional_context: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        生成本体定义
+        Generate an ontology definition
         
         Args:
-            document_texts: 文档文本列表
-            simulation_requirement: 模拟需求描述
-            additional_context: 额外上下文
+            document_texts: List of document texts
+            simulation_requirement: Description of the simulation requirement
+            additional_context: Additional context
             
         Returns:
-            本体定义（entity_types, edge_types等）
+            Ontology definition (entity_types, edge_types, etc.)
         """
-        # 构建用户消息
+        # Build the user message
         user_message = self._build_user_message(
             document_texts, 
             simulation_requirement,
@@ -231,7 +231,7 @@ class OntologyGenerator:
             {"role": "user", "content": user_message}
         ]
         
-        # 调用LLM
+        # Call the LLM
         result = self.llm_client.chat_json(
             messages=messages,
             temperature=0.3,
@@ -242,12 +242,12 @@ class OntologyGenerator:
             max_attempts=2,
         )
         
-        # 验证和后处理
+        # Validate and post-process
         result = self._validate_and_process(result)
         
         return result
     
-    # 传给 LLM 的文本最大长度（5万字）
+    # Maximum text length passed to the LLM (50,000 characters)
     MAX_TEXT_LENGTH_FOR_LLM = 50000
     LONG_TEXT_CHUNK_SIZE = 8000
     LONG_TEXT_CHUNK_OVERLAP = 200
@@ -260,7 +260,7 @@ class OntologyGenerator:
         simulation_requirement: str,
         additional_context: Optional[str]
     ) -> str:
-        """构建用户消息"""
+        """Build the user message"""
         
         combined_text = self._build_document_context(document_texts)
         
@@ -294,7 +294,7 @@ class OntologyGenerator:
         return message
 
     def _build_document_context(self, document_texts: List[str]) -> str:
-        """构建用于本体分析的文档上下文，长文本按全局分块抽样而不是只截取开头。"""
+        """Build the document context for ontology analysis; long texts are sampled from chunks across the whole document rather than truncated to the beginning."""
 
         combined_text = "\n\n---\n\n".join(document_texts)
         original_length = len(combined_text)
@@ -331,7 +331,7 @@ class OntologyGenerator:
         return context
 
     def _collect_document_chunks(self, document_texts: List[str]) -> List[Dict[str, Any]]:
-        """按文档收集分块，保留文档和分块编号方便提示词定位。"""
+        """Collect chunks per document, keeping document and chunk numbers so the prompt can reference them."""
 
         all_chunks: List[Dict[str, Any]] = []
         for doc_index, text in enumerate(document_texts, 1):
@@ -352,7 +352,7 @@ class OntologyGenerator:
         return all_chunks
 
     def _select_representative_chunks(self, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """从全部分块中等距抽样，覆盖长文开头、中段和结尾。"""
+        """Sample evenly spaced chunks from all chunks, covering the beginning, middle, and end of long texts."""
 
         if len(chunks) <= self.MAX_LONG_TEXT_CHUNKS:
             return chunks
@@ -368,7 +368,7 @@ class OntologyGenerator:
         return [chunks[i] for i in sorted(selected_indexes)]
 
     def _calculate_excerpt_budget(self, selected_count: int) -> int:
-        """根据选中的分块数量为每块分配字符预算。"""
+        """Allocate a per-chunk character budget based on the number of selected chunks."""
 
         header_budget = 600
         chunk_header_budget = 120 * selected_count
@@ -385,7 +385,7 @@ class OntologyGenerator:
         total_chunks: int,
         excerpt_limit: int,
     ) -> str:
-        """渲染长文本分块上下文。"""
+        """Render the chunked context for long texts."""
 
         lines = [
             (
@@ -414,7 +414,7 @@ class OntologyGenerator:
 
     @staticmethod
     def _excerpt_text(text: str, char_limit: int) -> str:
-        """长分块保留首尾，避免每个分块内部再次变成只看开头。"""
+        """Keep the head and tail of long chunks so each chunk isn't reduced to just its beginning."""
 
         text = text.strip()
         if len(text) <= char_limit:
@@ -430,7 +430,7 @@ class OntologyGenerator:
         return f"{text[:head_len].rstrip()}{marker}{text[-tail_len:].lstrip()}"
     
     def _validate_and_process(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        """验证和后处理结果"""
+        """Validate and post-process the result"""
         if not isinstance(result, dict):
             raise ValueError("Ontology result must be an object")
 
@@ -497,7 +497,7 @@ class OntologyGenerator:
 
         result["entity_types"] = processed_entities
 
-        # 兜底类型定义
+        # Fallback type definitions
         person_fallback = {
             "name": "Person",
             "description": "Any individual person not fitting other specific person types.",
@@ -518,12 +518,12 @@ class OntologyGenerator:
             "examples": ["small business", "community group"]
         }
         
-        # 检查是否已有兜底类型
+        # Check whether fallback types already exist
         entity_names = {e["name"] for e in result["entity_types"]}
         has_person = "Person" in entity_names
         has_organization = "Organization" in entity_names
         
-        # 需要添加的兜底类型
+        # Fallback types that need to be added
         fallbacks_to_add = []
         if not has_person:
             fallbacks_to_add.append(person_fallback)
@@ -534,17 +534,17 @@ class OntologyGenerator:
             current_count = len(result["entity_types"])
             needed_slots = len(fallbacks_to_add)
             
-            # 如果添加后会超过 10 个，需要移除一些现有类型
+            # If adding them would exceed 10, remove some existing types
             if current_count + needed_slots > MAX_ONTOLOGY_TYPES:
-                # 计算需要移除多少个
+                # Calculate how many to remove
                 to_remove = current_count + needed_slots - MAX_ONTOLOGY_TYPES
-                # 从末尾移除（保留前面更重要的具体类型）
+                # Remove from the end (keep the more important specific types at the front)
                 result["entity_types"] = result["entity_types"][:-to_remove]
             
-            # 添加兜底类型
+            # Add fallback types
             result["entity_types"].extend(fallbacks_to_add)
         
-        # 最终确保不超过限制（防御性编程）
+        # Finally, ensure the limit isn't exceeded (defensive programming)
         result["entity_types"] = result["entity_types"][:MAX_ONTOLOGY_TYPES]
 
         # Resolve edge endpoints only after entity fallback/capping, so an edge
@@ -626,13 +626,13 @@ class OntologyGenerator:
     
     def generate_python_code(self, ontology: Dict[str, Any]) -> str:
         """
-        将本体定义转换为Python代码（类似ontology.py）
+        Convert an ontology definition into Python code (similar to ontology.py)
         
         Args:
-            ontology: 本体定义
+            ontology: Ontology definition
             
         Returns:
-            Python代码字符串
+            Python code string
         """
         code_lines = [
             '"""',
@@ -648,7 +648,7 @@ class OntologyGenerator:
             '',
         ]
         
-        # 生成实体类型
+        # Generate entity types
         for entity in ontology.get("entity_types", []):
             name = entity["name"]
             desc = entity.get("description", f"A {name} entity.")
@@ -674,10 +674,10 @@ class OntologyGenerator:
         code_lines.append('# ============== 关系类型定义 ==============')
         code_lines.append('')
         
-        # 生成关系类型
+        # Generate relationship types
         for edge in ontology.get("edge_types", []):
             name = edge["name"]
-            # 转换为PascalCase类名
+            # Convert to a PascalCase class name
             class_name = ''.join(word.capitalize() for word in name.split('_'))
             desc = edge.get("description", f"A {name} relationship.")
             
@@ -699,7 +699,7 @@ class OntologyGenerator:
             code_lines.append('')
             code_lines.append('')
         
-        # 生成类型字典
+        # Generate type dictionaries
         code_lines.append('# ============== 类型配置 ==============')
         code_lines.append('')
         code_lines.append('ENTITY_TYPES = {')
@@ -716,7 +716,7 @@ class OntologyGenerator:
         code_lines.append('}')
         code_lines.append('')
         
-        # 生成边的source_targets映射
+        # Generate the edge source_targets mapping
         code_lines.append('EDGE_SOURCE_TARGETS = {')
         for edge in ontology.get("edge_types", []):
             name = edge["name"]
