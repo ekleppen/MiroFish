@@ -1,4 +1,5 @@
 from app.services.ontology_generator import OntologyGenerator
+from app.utils.locale import set_locale
 
 
 class RecordingLLMClient:
@@ -63,6 +64,28 @@ def test_very_long_ontology_context_selects_representative_chunks():
     assert "BEGIN" in context
     assert "FINALEND" in context
     assert context.count("--- 文档 1 / 分块") == generator.MAX_LONG_TEXT_CHUNKS
+
+
+def test_long_ontology_context_uses_english_headers_for_english_locale():
+    generator = _generator_for_test()
+    long_text = "BEGIN" + ("a" * 1050) + "MIDDLE" + ("b" * 1050) + "END"
+
+    set_locale("en")
+    try:
+        context = generator._build_document_context([long_text])
+    finally:
+        set_locale("zh")
+
+    assert len(context) <= generator.MAX_TEXT_LENGTH_FOR_LLM
+    assert "[Automatic chunked summary of long text]" in context
+    assert "长文本自动分块摘要" not in context
+    assert "BEGIN" in context
+    assert "MIDDLE" in context
+    assert "END" in context
+    assert "Chunk 1/" in context
+    assert "Chunk 3/" in context
+    assert "Chunk 5/" in context
+    assert context.count("--- Document 1 / Chunk") == generator.MAX_LONG_TEXT_CHUNKS
 
 
 def test_ontology_generation_does_not_cap_structured_output_tokens():
