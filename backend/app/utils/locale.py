@@ -63,6 +63,15 @@ def t(key: str, **kwargs) -> str:
     return value
 
 
+def localized(zh: str, en: str) -> str:
+    """Pick the Chinese or English variant of an LLM prompt.
+
+    Prompts exist only in these two languages; every non-Chinese locale uses the
+    English prompt, and get_language_instruction() sets the output language.
+    """
+    return zh if get_locale() == 'zh' else en
+
+
 def get_language_instruction() -> str:
     locale = get_locale()
     lang_config = _languages.get(locale, _languages.get('zh', {}))
