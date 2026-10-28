@@ -156,6 +156,7 @@ def init_logging_for_simulation(simulation_dir: str):
 
 
 from action_logger import SimulationLogManager, PlatformActionLogger
+from round_schedule import build_round_schedule, full_round_count, select_active_agent_ids
 
 try:
     from camel.models import ModelFactory
@@ -1044,40 +1045,11 @@ def get_active_agents_for_round(
     round_num: int
 ) -> List:
     """Decide which Agents to activate this round based on time and config"""
-    time_config = config.get("time_config", {})
-    agent_configs = config.get("agent_configs", [])
-    
-    base_min = time_config.get("agents_per_hour_min", 5)
-    base_max = time_config.get("agents_per_hour_max", 20)
-    
-    peak_hours = time_config.get("peak_hours", [9, 10, 11, 14, 15, 20, 21, 22])
-    off_peak_hours = time_config.get("off_peak_hours", [0, 1, 2, 3, 4, 5])
-    
-    if current_hour in peak_hours:
-        multiplier = time_config.get("peak_activity_multiplier", 1.5)
-    elif current_hour in off_peak_hours:
-        multiplier = time_config.get("off_peak_activity_multiplier", 0.3)
-    else:
-        multiplier = 1.0
-    
-    target_count = int(random.uniform(base_min, base_max) * multiplier)
-    
-    candidates = []
-    for cfg in agent_configs:
-        agent_id = cfg.get("agent_id", 0)
-        active_hours = cfg.get("active_hours", list(range(8, 23)))
-        activity_level = cfg.get("activity_level", 0.5)
-        
-        if current_hour not in active_hours:
-            continue
-        
-        if random.random() < activity_level:
-            candidates.append(agent_id)
-    
-    selected_ids = random.sample(
-        candidates, 
-        min(target_count, len(candidates))
-    ) if candidates else []
+    selected_ids = select_active_agent_ids(
+        config.get("time_config", {}),
+        config.get("agent_configs", []),
+        current_hour,
+    )
     
     active_agents = []
     for agent_id in selected_ids:
@@ -1212,29 +1184,34 @@ async def run_twitter_simulation(
     
     # Main simulation loop
     time_config = config.get("time_config", {})
-    total_hours = time_config.get("total_simulation_hours", 72)
-    minutes_per_round = time_config.get("minutes_per_round", 30)
-    total_rounds = (total_hours * 60) // minutes_per_round
-    
-    # Truncate if a maximum number of rounds is specified
-    if max_rounds is not None and max_rounds > 0:
-        original_rounds = total_rounds
-        total_rounds = min(total_rounds, max_rounds)
-        if total_rounds < original_rounds:
-            log_info(f"Rounds truncated: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
+    full_rounds = full_round_count(time_config)
+    schedule = build_round_schedule(
+        time_config, config.get("agent_configs", []), max_rounds
+    )
+    total_rounds = len(schedule)
+    if total_rounds < full_rounds:
+        log_info(
+            f"Rounds truncated: {full_rounds} -> {total_rounds} (max_rounds={max_rounds}); "
+            f"rounds are spread across the simulated day"
+        )
     
     start_time = datetime.now()
     
-    for round_num in range(total_rounds):
+    for slot in schedule:
+        round_num = slot["round_num"]
         # Check whether an exit signal was received
         if _shutdown_event and _shutdown_event.is_set():
             if main_logger:
-                main_logger.info(f"Received exit signal, stopping simulation at round {round_num + 1}")
+                main_logger.info(f"Received exit signal, stopping simulation at round {round_num}")
             break
         
-        simulated_minutes = round_num * minutes_per_round
-        simulated_hour = (simulated_minutes // 60) % 24
-        simulated_day = simulated_minutes // (60 * 24) + 1
+        simulated_hour = slot["hour"]
+        simulated_day = slot["day"]
+        # Simulated time elapsed once this round is over
+        simulated_hours = round(
+            (slot["simulated_minutes"] + slot["step_minutes"]) / 60, 1
+        )
+        clock = f"Day {simulated_day}, {simulated_hour:02d}:00"
         
         active_agents = get_active_agents_for_round(
             result.env, config, simulated_hour, round_num
@@ -1242,14 +1219,20 @@ async def run_twitter_simulation(
         
         # Log round start regardless of whether any agents are active
         if action_logger:
-            action_logger.log_round_start(round_num + 1, simulated_hour)
+            action_logger.log_round_start(
+                round_num, simulated_hour, active_agents=len(active_agents)
+            )
         
         if not active_agents:
+            log_info(f"Round {round_num}/{total_rounds} ({clock}): no Agents active at this hour, skipped")
             # Also log round end when no agents are active (actions_count=0)
             if action_logger:
-                action_logger.log_round_end(round_num + 1, 0)
+                action_logger.log_round_end(
+                    round_num, 0, simulated_hours=simulated_hours, active_agents=0
+                )
             continue
         
+        log_info(f"Round {round_num}/{total_rounds} ({clock}): {len(active_agents)} Agents acting...")
         actions = {agent: LLMAction() for _, agent in active_agents}
         await result.env.step(actions)
         
@@ -1262,7 +1245,7 @@ async def run_twitter_simulation(
         for action_data in actual_actions:
             if action_logger:
                 action_logger.log_action(
-                    round_num=round_num + 1,
+                    round_num=round_num,
                     agent_id=action_data['agent_id'],
                     agent_name=action_data['agent_name'],
                     action_type=action_data['action_type'],
@@ -1272,11 +1255,17 @@ async def run_twitter_simulation(
                 round_action_count += 1
         
         if action_logger:
-            action_logger.log_round_end(round_num + 1, round_action_count)
+            action_logger.log_round_end(
+                round_num,
+                round_action_count,
+                simulated_hours=simulated_hours,
+                active_agents=len(active_agents),
+            )
         
-        if (round_num + 1) % 20 == 0:
-            progress = (round_num + 1) / total_rounds * 100
-            log_info(f"Day {simulated_day}, {simulated_hour:02d}:00 - Round {round_num + 1}/{total_rounds} ({progress:.1f}%)")
+        progress = round_num / total_rounds * 100
+        log_info(
+            f"Round {round_num}/{total_rounds} ({clock}): {round_action_count} actions ({progress:.1f}%)"
+        )
     
     # Note: do not close the environment; keep it for Interview use
     
@@ -1411,29 +1400,34 @@ async def run_reddit_simulation(
     
     # Main simulation loop
     time_config = config.get("time_config", {})
-    total_hours = time_config.get("total_simulation_hours", 72)
-    minutes_per_round = time_config.get("minutes_per_round", 30)
-    total_rounds = (total_hours * 60) // minutes_per_round
-    
-    # Truncate if a maximum number of rounds is specified
-    if max_rounds is not None and max_rounds > 0:
-        original_rounds = total_rounds
-        total_rounds = min(total_rounds, max_rounds)
-        if total_rounds < original_rounds:
-            log_info(f"Rounds truncated: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
+    full_rounds = full_round_count(time_config)
+    schedule = build_round_schedule(
+        time_config, config.get("agent_configs", []), max_rounds
+    )
+    total_rounds = len(schedule)
+    if total_rounds < full_rounds:
+        log_info(
+            f"Rounds truncated: {full_rounds} -> {total_rounds} (max_rounds={max_rounds}); "
+            f"rounds are spread across the simulated day"
+        )
     
     start_time = datetime.now()
     
-    for round_num in range(total_rounds):
+    for slot in schedule:
+        round_num = slot["round_num"]
         # Check whether an exit signal was received
         if _shutdown_event and _shutdown_event.is_set():
             if main_logger:
-                main_logger.info(f"Received exit signal, stopping simulation at round {round_num + 1}")
+                main_logger.info(f"Received exit signal, stopping simulation at round {round_num}")
             break
         
-        simulated_minutes = round_num * minutes_per_round
-        simulated_hour = (simulated_minutes // 60) % 24
-        simulated_day = simulated_minutes // (60 * 24) + 1
+        simulated_hour = slot["hour"]
+        simulated_day = slot["day"]
+        # Simulated time elapsed once this round is over
+        simulated_hours = round(
+            (slot["simulated_minutes"] + slot["step_minutes"]) / 60, 1
+        )
+        clock = f"Day {simulated_day}, {simulated_hour:02d}:00"
         
         active_agents = get_active_agents_for_round(
             result.env, config, simulated_hour, round_num
@@ -1441,14 +1435,20 @@ async def run_reddit_simulation(
         
         # Log round start regardless of whether any agents are active
         if action_logger:
-            action_logger.log_round_start(round_num + 1, simulated_hour)
+            action_logger.log_round_start(
+                round_num, simulated_hour, active_agents=len(active_agents)
+            )
         
         if not active_agents:
+            log_info(f"Round {round_num}/{total_rounds} ({clock}): no Agents active at this hour, skipped")
             # Also log round end when no agents are active (actions_count=0)
             if action_logger:
-                action_logger.log_round_end(round_num + 1, 0)
+                action_logger.log_round_end(
+                    round_num, 0, simulated_hours=simulated_hours, active_agents=0
+                )
             continue
         
+        log_info(f"Round {round_num}/{total_rounds} ({clock}): {len(active_agents)} Agents acting...")
         actions = {agent: LLMAction() for _, agent in active_agents}
         await result.env.step(actions)
         
@@ -1461,7 +1461,7 @@ async def run_reddit_simulation(
         for action_data in actual_actions:
             if action_logger:
                 action_logger.log_action(
-                    round_num=round_num + 1,
+                    round_num=round_num,
                     agent_id=action_data['agent_id'],
                     agent_name=action_data['agent_name'],
                     action_type=action_data['action_type'],
@@ -1471,11 +1471,17 @@ async def run_reddit_simulation(
                 round_action_count += 1
         
         if action_logger:
-            action_logger.log_round_end(round_num + 1, round_action_count)
+            action_logger.log_round_end(
+                round_num,
+                round_action_count,
+                simulated_hours=simulated_hours,
+                active_agents=len(active_agents),
+            )
         
-        if (round_num + 1) % 20 == 0:
-            progress = (round_num + 1) / total_rounds * 100
-            log_info(f"Day {simulated_day}, {simulated_hour:02d}:00 - Round {round_num + 1}/{total_rounds} ({progress:.1f}%)")
+        progress = round_num / total_rounds * 100
+        log_info(
+            f"Round {round_num}/{total_rounds} ({clock}): {round_action_count} actions ({progress:.1f}%)"
+        )
     
     # Note: do not close the environment; keep it for Interview use
     

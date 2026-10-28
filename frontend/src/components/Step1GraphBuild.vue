@@ -21,8 +21,14 @@
             {{ $t('step1.ontologyDesc') }}
           </p>
 
+          <div v-if="error && currentPhase <= 0" class="error-section">
+            <div class="error-title">{{ $t('step1.ontologyFailedTitle') }}</div>
+            <div class="error-message">{{ error }}</div>
+            <button class="retry-btn" @click="$emit('retry')">{{ $t('step1.retry') }}</button>
+          </div>
+
           <!-- Loading / Progress -->
-          <div v-if="currentPhase === 0 && ontologyProgress" class="progress-section">
+          <div v-else-if="currentPhase === 0 && ontologyProgress" class="progress-section">
             <div class="spinner-sm"></div>
             <span>{{ ontologyProgress.message || $t('step1.analyzingDocs') }}</span>
           </div>
@@ -201,10 +207,11 @@ const props = defineProps({
   ontologyProgress: Object,
   buildProgress: Object,
   graphData: Object,
-  systemLogs: { type: Array, default: () => [] }
+  systemLogs: { type: Array, default: () => [] },
+  error: { type: String, default: '' }
 })
 
-defineEmits(['next-step'])
+defineEmits(['next-step', 'retry'])
 
 const selectedOntologyItem = ref(null)
 const logContent = ref(null)
@@ -273,6 +280,42 @@ watch(() => props.systemLogs.length, () => {
 </script>
 
 <style scoped>
+.error-section {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #F5C2C0;
+  border-radius: 6px;
+  background: #FEF2F2;
+  color: #991B1B;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.error-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.error-message {
+  word-break: break-word;
+}
+
+.retry-btn {
+  margin-top: 10px;
+  padding: 6px 14px;
+  border: 1px solid #991B1B;
+  border-radius: 4px;
+  background: #FFF;
+  color: #991B1B;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.retry-btn:hover {
+  background: #991B1B;
+  color: #FFF;
+}
+
 .workbench-panel {
   height: 100%;
   background-color: #FAFAFA;

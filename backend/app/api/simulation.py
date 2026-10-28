@@ -1342,6 +1342,45 @@ def get_simulation_config(simulation_id: str):
         }), 500
 
 
+@simulation_bp.route('/<simulation_id>/round-preview', methods=['GET'])
+def get_round_preview(simulation_id: str):
+    """
+    Preview which simulated hours a run covers for a given round count
+
+    Query params:
+        max_rounds: optional round limit chosen in the wizard
+
+    Returns:
+        total_rounds, step_minutes, covered_hours, rounds_without_agents,
+        agents_never_active, warning
+    """
+    from scripts.round_schedule import preview_coverage
+
+    try:
+        max_rounds = request.args.get('max_rounds', type=int)
+        if max_rounds is not None and max_rounds <= 0:
+            max_rounds = None
+
+        config = SimulationManager().get_simulation_config(simulation_id)
+        if not config:
+            return jsonify({
+                "success": False,
+                "error": t('api.configNotFound')
+            }), 404
+
+        return jsonify({
+            "success": True,
+            "data": preview_coverage(config, max_rounds)
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to preview rounds: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
 @simulation_bp.route('/<simulation_id>/config/download', methods=['GET'])
 def download_simulation_config(simulation_id: str):
     """Download the simulation config file"""
@@ -1822,7 +1861,11 @@ def stop_simulation():
         manager = SimulationManager()
         state = manager.get_simulation(simulation_id)
         if state:
-            state.status = SimulationStatus.STOPPED
+            state.status = (
+                SimulationStatus.COMPLETED
+                if run_state.runner_status == RunnerStatus.COMPLETED
+                else SimulationStatus.STOPPED
+            )
             state.error = None
             manager._save_simulation_state(state)
         

@@ -133,6 +133,14 @@ class SimulationRunState:
     # Platform completion status (detected via the simulation_end event in actions.jsonl)
     twitter_completed: bool = False
     reddit_completed: bool = False
+
+    # Active Agents in the latest round and rounds where nobody was active
+    last_round_active_agents: Optional[int] = None
+    twitter_last_round_active_agents: Optional[int] = None
+    reddit_last_round_active_agents: Optional[int] = None
+    empty_rounds_count: int = 0
+    twitter_empty_rounds: int = 0
+    reddit_empty_rounds: int = 0
     
     # Per-round summaries
     rounds: List[RoundSummary] = field(default_factory=list)
@@ -183,6 +191,12 @@ class SimulationRunState:
             "reddit_running": self.reddit_running,
             "twitter_completed": self.twitter_completed,
             "reddit_completed": self.reddit_completed,
+            "last_round_active_agents": self.last_round_active_agents,
+            "twitter_last_round_active_agents": self.twitter_last_round_active_agents,
+            "reddit_last_round_active_agents": self.reddit_last_round_active_agents,
+            "empty_rounds_count": self.empty_rounds_count,
+            "twitter_empty_rounds": self.twitter_empty_rounds,
+            "reddit_empty_rounds": self.reddit_empty_rounds,
             "twitter_actions_count": self.twitter_actions_count,
             "reddit_actions_count": self.reddit_actions_count,
             "total_actions_count": self.twitter_actions_count + self.reddit_actions_count,
@@ -324,6 +338,12 @@ class SimulationRunner:
                 reddit_running=data.get("reddit_running", False),
                 twitter_completed=data.get("twitter_completed", False),
                 reddit_completed=data.get("reddit_completed", False),
+                last_round_active_agents=data.get("last_round_active_agents"),
+                twitter_last_round_active_agents=data.get("twitter_last_round_active_agents"),
+                reddit_last_round_active_agents=data.get("reddit_last_round_active_agents"),
+                empty_rounds_count=data.get("empty_rounds_count", 0),
+                twitter_empty_rounds=data.get("twitter_empty_rounds", 0),
+                reddit_empty_rounds=data.get("reddit_empty_rounds", 0),
                 twitter_actions_count=data.get("twitter_actions_count", 0),
                 reddit_actions_count=data.get("reddit_actions_count", 0),
                 started_at=data.get("started_at"),
@@ -637,6 +657,7 @@ class SimulationRunner:
         
         monitor_error: Exception | None = None
         exit_code: int | None = None
+        platforms_finalized = False
         try:
             while process.poll() is None:  # Process is still running
                 # Read the Twitter action log
@@ -650,6 +671,12 @@ class SimulationRunner:
                     reddit_position = cls._read_action_log(
                         reddit_actions_log, reddit_position, state, "reddit"
                     )
+
+                # The process stays alive in wait-for-commands mode after the
+                # last round, so completion is published here, not on exit.
+                if not platforms_finalized and cls._check_all_platforms_completed(state):
+                    state = cls._finalize_platforms_completed(simulation_id, state)
+                    platforms_finalized = True
                 
                 # Update state
                 cls._save_run_state(state)
@@ -676,9 +703,12 @@ class SimulationRunner:
                 if latest_state is not None:
                     state = latest_state
 
+                # COMPLETED was published when the platforms finished; a later
+                # exit (close-env, shutdown) must not overwrite it.
                 if state.runner_status not in {
                     RunnerStatus.STOPPED,
                     RunnerStatus.FAILED,
+                    RunnerStatus.COMPLETED,
                 }:
                     manual_stop = simulation_id in cls._manual_stop_requests
                     desired_status = (
@@ -822,27 +852,44 @@ class SimulationRunner:
                                     if all_completed:
                                         # Platform completion is only an input
                                         # signal. The monitor publishes the
-                                        # terminal status after the process has
-                                        # exited and Zep ingestion has drained.
+                                        # terminal status after Zep ingestion
+                                        # has drained.
                                         logger.info(
-                                            f"All platforms finished; waiting for process exit and graph writes: "
+                                            f"All platforms finished; waiting for graph writes: "
                                             f"{state.simulation_id}"
                                         )
                                 
                                 # Update round info (from the round_end event)
                                 elif event_type == "round_end":
                                     round_num = action_data.get("round", 0)
-                                    simulated_hours = action_data.get("simulated_hours", 0)
+                                    active_agents = action_data.get("active_agents")
                                     
                                     # Update per-platform rounds and time
                                     if platform == "twitter":
                                         if round_num > state.twitter_current_round:
                                             state.twitter_current_round = round_num
-                                        state.twitter_simulated_hours = simulated_hours
+                                        state.twitter_simulated_hours = action_data.get(
+                                            "simulated_hours", state.twitter_simulated_hours
+                                        )
                                     elif platform == "reddit":
                                         if round_num > state.reddit_current_round:
                                             state.reddit_current_round = round_num
-                                        state.reddit_simulated_hours = simulated_hours
+                                        state.reddit_simulated_hours = action_data.get(
+                                            "simulated_hours", state.reddit_simulated_hours
+                                        )
+
+                                    if active_agents is not None and round_num > 0:
+                                        state.last_round_active_agents = active_agents
+                                        if platform == "twitter":
+                                            state.twitter_last_round_active_agents = active_agents
+                                        elif platform == "reddit":
+                                            state.reddit_last_round_active_agents = active_agents
+                                        if active_agents == 0:
+                                            state.empty_rounds_count += 1
+                                            if platform == "twitter":
+                                                state.twitter_empty_rounds += 1
+                                            elif platform == "reddit":
+                                                state.reddit_empty_rounds += 1
                                     
                                     # Overall round is the max of the two platforms
                                     if round_num > state.current_round:
@@ -880,6 +927,65 @@ class SimulationRunner:
             logger.warning(f"Failed to read action log: {log_path}, error={e}")
             return position
     
+    @classmethod
+    def _finalize_platforms_completed(
+        cls,
+        simulation_id: str,
+        state: SimulationRunState,
+    ) -> SimulationRunState:
+        """Publish the terminal status once every platform has finished its rounds.
+
+        The simulation process keeps running afterwards so agents can still be
+        interviewed. COMPLETED is only published after Zep ingestion drains.
+        """
+        with cls._finalization_lock(simulation_id):
+            latest_state = cls.get_run_state(simulation_id)
+            if latest_state is not None:
+                state = latest_state
+            if (
+                simulation_id in cls._manual_stop_requests
+                or state.runner_status in {
+                    RunnerStatus.STOPPED,
+                    RunnerStatus.FAILED,
+                    RunnerStatus.COMPLETED,
+                }
+            ):
+                return state
+
+            state.twitter_running = False
+            state.reddit_running = False
+            desired_status = RunnerStatus.COMPLETED
+            error_message = None
+
+            if cls._graph_memory_enabled.get(simulation_id, False):
+                state.runner_status = RunnerStatus.STOPPING
+                cls._save_run_state(state)
+                cls._sync_simulation_status(simulation_id, RunnerStatus.STOPPING)
+                try:
+                    ZepGraphMemoryManager.stop_updater(simulation_id)
+                    cls._graph_memory_enabled.pop(simulation_id, None)
+                    logger.info(
+                        "Graph memory updates stopped: simulation_id=%s",
+                        simulation_id,
+                    )
+                except Exception as error:
+                    logger.error(f"Failed to stop graph memory updater: {error}")
+                    desired_status = RunnerStatus.FAILED
+                    error_message = t('backend.simulationRunner.graphWriteIncomplete', error=error)
+
+            state.runner_status = desired_status
+            state.error = error_message
+            state.completed_at = datetime.now().isoformat()
+            cls._save_run_state(state)
+            cls._sync_simulation_status(simulation_id, desired_status, error_message)
+            if desired_status == RunnerStatus.COMPLETED:
+                logger.info(
+                    f"Simulation completed; environment stays open for interviews: {simulation_id}"
+                )
+            else:
+                logger.error(f"Simulation failed: {simulation_id}, error={state.error}")
+            return state
+
     @classmethod
     def _check_all_platforms_completed(cls, state: SimulationRunState) -> bool:
         """
@@ -971,6 +1077,24 @@ class SimulationRunner:
             if not state:
                 raise ValueError(t('api.simulationNotFound', id=simulation_id))
             if state.runner_status == RunnerStatus.STOPPED:
+                return state
+
+            if state.runner_status == RunnerStatus.COMPLETED:
+                # Ingestion already drained; stopping only closes the
+                # environment that was kept open for interviews.
+                process = cls._processes.get(simulation_id)
+                if process and process.poll() is None:
+                    try:
+                        cls._terminate_process(process, simulation_id)
+                    except ProcessLookupError:
+                        pass
+                    except Exception as e:
+                        logger.error(f"Failed to terminate process group: {simulation_id}, error={e}")
+                        try:
+                            process.terminate()
+                            process.wait(timeout=5)
+                        except Exception:
+                            process.kill()
                 return state
 
             pending_updater = ZepGraphMemoryManager.get_updater(simulation_id)

@@ -65,6 +65,29 @@ def test_ontology_api_does_not_expose_provider_error_body(tmp_path, monkeypatch)
 
     assert response.status_code == 502
     assert "HTTP 401" in response.json["error"]
+    assert "LLM_API_KEY" in response.json["error"]
     assert "request-safe-id" in response.json["error"]
     assert "SECRET-PROVIDER-BODY" not in response.get_data(as_text=True)
     assert "traceback" not in response.json
+
+
+def test_ontology_api_keeps_generic_message_for_non_auth_provider_errors(
+    tmp_path, monkeypatch
+):
+    class ProviderError(RuntimeError):
+        status_code = 429
+        request_id = None
+
+    class FailingGenerator:
+        def generate(self, **kwargs):
+            raise ProviderError("rate limited")
+
+    monkeypatch.setattr(ProjectManager, "PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr(graph_api, "OntologyGenerator", FailingGenerator)
+
+    app = create_app()
+    app.config.update(TESTING=True)
+    response = _post_ontology(app.test_client())
+
+    assert response.status_code == 502
+    assert response.json["error"] == "LLM provider request failed (HTTP 429)"

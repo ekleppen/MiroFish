@@ -59,7 +59,9 @@
           :buildProgress="buildProgress"
           :graphData="graphData"
           :systemLogs="systemLogs"
+          :error="error"
           @next-step="handleNextStep"
+          @retry="handleRetry"
         />
         <!-- Step 2: 环境搭建 -->
         <Step2EnvSetup
@@ -220,14 +222,27 @@ const handleNewProject = async () => {
       addLog(`Ontology generated successfully for project ${res.data.project_id}`)
       await startBuildGraph()
     } else {
+      ontologyProgress.value = null
       error.value = res.error || 'Ontology generation failed'
       addLog(`Error generating ontology: ${error.value}`)
     }
   } catch (err) {
+    ontologyProgress.value = null
     error.value = err.message
     addLog(`Exception in handleNewProject: ${err.message}`)
   } finally {
     loading.value = false
+  }
+}
+
+// The pending upload is only cleared on success, so a retry can resend it
+const handleRetry = async () => {
+  error.value = ''
+  if (getPendingUpload().isPending) {
+    addLog('Retrying ontology generation...')
+    await handleNewProject()
+  } else {
+    router.push('/')
   }
 }
 
@@ -238,7 +253,7 @@ const loadProject = async () => {
     const res = await getProject(currentProjectId.value)
     if (res.success) {
       projectData.value = res.data
-      updatePhaseByStatus(res.data.status)
+      updatePhaseByStatus(res.data.status, res.data.error)
       addLog(`Project loaded. Status: ${res.data.status}`)
       
       if (res.data.status === 'ontology_generated' && !res.data.graph_id) {
@@ -262,13 +277,13 @@ const loadProject = async () => {
   }
 }
 
-const updatePhaseByStatus = (status) => {
+const updatePhaseByStatus = (status, projectError) => {
   switch (status) {
     case 'created':
     case 'ontology_generated': currentPhase.value = 0; break;
     case 'graph_building': currentPhase.value = 1; break;
     case 'graph_completed': currentPhase.value = 2; break;
-    case 'failed': error.value = 'Project failed'; break;
+    case 'failed': error.value = projectError || 'Project failed'; break;
   }
 }
 

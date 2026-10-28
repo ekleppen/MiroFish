@@ -103,6 +103,11 @@
       </div>
     </div>
 
+    <div v-if="statusBanner" class="status-banner" :class="statusBanner.kind">
+      <span v-if="statusBanner.kind === 'saving'" class="banner-spinner"></span>
+      <span>{{ statusBanner.text }}</span>
+    </div>
+
     <!-- Main Content: Dual Timeline -->
     <div class="main-content-area" ref="scrollContainer">
       <!-- Timeline Header -->
@@ -264,7 +269,7 @@
 
         <div v-if="allActions.length === 0" class="waiting-state">
           <div class="pulse-ring"></div>
-          <span>Waiting for agent actions...</span>
+          <span>{{ $t('step3.waitingForActions') }}</span>
         </div>
       </div>
     </div>
@@ -341,10 +346,13 @@ const redditActionsCount = computed(() => {
   return allActions.value.filter(a => a.platform === 'reddit').length
 })
 
-// 格式化模拟流逝时间（根据轮次和每轮分钟数计算）
-const formatElapsedTime = (currentRound) => {
+// Simulated elapsed time; the backend reports it because truncated runs
+// spread rounds across the simulated day
+const formatElapsedTime = (simulatedHours, currentRound) => {
   if (!currentRound || currentRound <= 0) return '0h 0m'
-  const totalMinutes = currentRound * props.minutesPerRound
+  const totalMinutes = simulatedHours > 0
+    ? Math.round(simulatedHours * 60)
+    : currentRound * props.minutesPerRound
   const hours = Math.floor(totalMinutes / 60)
   const minutes = totalMinutes % 60
   return `${hours}h ${minutes}m`
@@ -352,12 +360,42 @@ const formatElapsedTime = (currentRound) => {
 
 // Twitter平台的模拟流逝时间
 const twitterElapsedTime = computed(() => {
-  return formatElapsedTime(runStatus.value.twitter_current_round || 0)
+  return formatElapsedTime(
+    runStatus.value.twitter_simulated_hours || 0,
+    runStatus.value.twitter_current_round || 0
+  )
 })
 
 // Reddit平台的模拟流逝时间
 const redditElapsedTime = computed(() => {
-  return formatElapsedTime(runStatus.value.reddit_current_round || 0)
+  return formatElapsedTime(
+    runStatus.value.reddit_simulated_hours || 0,
+    runStatus.value.reddit_current_round || 0
+  )
+})
+
+// Rounds so far in which no Agent was awake, if every round so far was empty
+const allEmptyRounds = (empty, current) => (current > 0 && empty >= current ? empty : 0)
+
+const statusBanner = computed(() => {
+  const data = runStatus.value || {}
+  if (data.runner_status === 'stopping') {
+    return {
+      kind: 'saving',
+      text: t(checkPlatformsCompleted(data) ? 'step3.bannerSaving' : 'step3.bannerStopping')
+    }
+  }
+  if (data.runner_status === 'completed') {
+    return { kind: 'done', text: t('step3.bannerCompleted') }
+  }
+  const emptyRounds = Math.max(
+    allEmptyRounds(data.twitter_empty_rounds || 0, data.twitter_current_round || 0),
+    allEmptyRounds(data.reddit_empty_rounds || 0, data.reddit_current_round || 0)
+  )
+  if (phase.value === 1 && emptyRounds > 0) {
+    return { kind: 'warn', text: t('step3.bannerNoActivity', { count: emptyRounds }) }
+  }
+  return null
 })
 
 // Methods
@@ -373,6 +411,7 @@ const resetAllState = () => {
   actionIds.value = new Set()
   prevTwitterRound.value = 0
   prevRedditRound.value = 0
+  savingLogged.value = false
   startError.value = null
   isStarting.value = false
   isStopping.value = false
@@ -449,6 +488,7 @@ const handleStopSimulation = async () => {
     
     if (res.success) {
       addLog(t('log.simStoppedSuccess'))
+      if (res.data) runStatus.value = res.data
       phase.value = 2
       stopPolling()
       emit('update-status', 'completed')
@@ -488,6 +528,21 @@ const stopPolling = () => {
 // 追踪各平台的上一次轮次，用于检测变化并输出日志
 const prevTwitterRound = ref(0)
 const prevRedditRound = ref(0)
+const savingLogged = ref(false)
+
+const formatHours = (hours) => Math.round((hours || 0) * 10) / 10
+
+const logRound = (platform, round, total, hours, agents, actions) => {
+  const params = {
+    platform,
+    round,
+    total: total || '-',
+    hours: formatHours(hours),
+    agents: agents ?? '-',
+    actions: actions || 0
+  }
+  addLog(agents === 0 ? t('step3.roundLogNoAgents', params) : t('step3.roundLog', params))
+}
 
 const fetchRunStatus = async () => {
   if (!props.simulationId) return
@@ -502,13 +557,32 @@ const fetchRunStatus = async () => {
       
       // 分别检测各平台的轮次变化并输出日志
       if (data.twitter_current_round > prevTwitterRound.value) {
-        addLog(`[Plaza] R${data.twitter_current_round}/${data.total_rounds} | T:${data.twitter_simulated_hours || 0}h | A:${data.twitter_actions_count}`)
+        logRound(
+          'Plaza',
+          data.twitter_current_round,
+          data.total_rounds,
+          data.twitter_simulated_hours,
+          data.twitter_last_round_active_agents,
+          data.twitter_actions_count
+        )
         prevTwitterRound.value = data.twitter_current_round
       }
       
       if (data.reddit_current_round > prevRedditRound.value) {
-        addLog(`[Community] R${data.reddit_current_round}/${data.total_rounds} | T:${data.reddit_simulated_hours || 0}h | A:${data.reddit_actions_count}`)
+        logRound(
+          'Community',
+          data.reddit_current_round,
+          data.total_rounds,
+          data.reddit_simulated_hours,
+          data.reddit_last_round_active_agents,
+          data.reddit_actions_count
+        )
         prevRedditRound.value = data.reddit_current_round
+      }
+
+      if (data.runner_status === 'stopping' && checkPlatformsCompleted(data) && !savingLogged.value) {
+        addLog(t('step3.savingMemoriesLog'))
+        savingLogged.value = true
       }
       
       // 检测模拟是否已完成（通过 runner_status 或平台完成状态判断）
@@ -908,6 +982,44 @@ onUnmounted(() => {
   overflow-y: auto;
   position: relative;
   background: #FFF;
+}
+
+.status-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 24px;
+  font-size: 13px;
+  border-bottom: 1px solid #EAEAEA;
+}
+
+.status-banner.saving {
+  background: #F5F8FF;
+  color: #1E3A8A;
+}
+
+.status-banner.done {
+  background: #F2FBF5;
+  color: #166534;
+}
+
+.status-banner.warn {
+  background: #FFF8EB;
+  color: #92400E;
+}
+
+.banner-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(30, 58, 138, 0.25);
+  border-top-color: #1E3A8A;
+  border-radius: 50%;
+  animation: banner-spin 0.8s linear infinite;
+}
+
+@keyframes banner-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* Timeline Header */
