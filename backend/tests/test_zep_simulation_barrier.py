@@ -79,6 +79,193 @@ def test_platform_completion_does_not_publish_terminal_success_before_barrier(
     assert state.runner_status == RunnerStatus.RUNNING
 
 
+def test_round_end_events_track_active_agents_and_empty_rounds(tmp_path):
+    log_path = tmp_path / "actions.jsonl"
+    events = [
+        {"event_type": "round_end", "round": 0, "actions_count": 2},
+        {"event_type": "round_end", "round": 1, "actions_count": 3,
+         "simulated_hours": 0.0, "active_agents": 4},
+        {"event_type": "round_end", "round": 2, "actions_count": 0,
+         "simulated_hours": 2.4, "active_agents": 0},
+    ]
+    log_path.write_text(
+        "".join(json.dumps(event) + "\n" for event in events),
+        encoding="utf-8",
+    )
+    state = SimulationRunState(simulation_id="sim-rounds")
+
+    SimulationRunner._read_action_log(str(log_path), 0, state, "twitter")
+
+    assert state.twitter_current_round == 2
+    assert state.twitter_simulated_hours == 2.4
+    assert state.twitter_last_round_active_agents == 0
+    assert state.last_round_active_agents == 0
+    assert state.twitter_empty_rounds == 1
+    assert state.empty_rounds_count == 1
+    assert state.to_dict()["empty_rounds_count"] == 1
+
+
+def _patch_state_store(monkeypatch, state, saved=None):
+    monkeypatch.setattr(
+        SimulationRunner,
+        "get_run_state",
+        classmethod(lambda _cls, _simulation_id: state),
+    )
+    monkeypatch.setattr(
+        SimulationRunner,
+        "_save_run_state",
+        classmethod(
+            lambda _cls, value: saved.append(value.runner_status)
+            if saved is not None else None
+        ),
+    )
+    monkeypatch.setattr(
+        SimulationRunner,
+        "_sync_simulation_status",
+        classmethod(lambda _cls, *_args, **_kwargs: None),
+    )
+
+
+def test_monitor_completes_while_process_stays_open_for_interviews(
+    monkeypatch, tmp_path
+):
+    simulation_id = "sim-live"
+    log_dir = tmp_path / simulation_id / "twitter"
+    log_dir.mkdir(parents=True)
+    (log_dir / "actions.jsonl").write_text(
+        '{"event_type":"simulation_end","total_rounds":1,"total_actions":0}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(SimulationRunner, "RUN_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(runner_module.time, "sleep", lambda _seconds: None)
+    state = SimulationRunState(
+        simulation_id=simulation_id,
+        runner_status=RunnerStatus.RUNNING,
+        twitter_running=True,
+    )
+    _patch_state_store(monkeypatch, state)
+    drained = []
+    monkeypatch.setattr(
+        runner_module.ZepGraphMemoryManager,
+        "stop_updater",
+        classmethod(lambda _cls, sim_id: drained.append(sim_id)),
+    )
+    statuses_while_alive = []
+
+    class Process:
+        # A later SIGTERM from close/shutdown exits non-zero.
+        returncode = -15
+        polls = 0
+
+        def poll(self):
+            self.polls += 1
+            if self.polls > 3:
+                return self.returncode
+            statuses_while_alive.append(state.runner_status)
+            return None
+
+    SimulationRunner._processes[simulation_id] = Process()
+    SimulationRunner._graph_memory_enabled[simulation_id] = True
+    try:
+        SimulationRunner._monitor_simulation(simulation_id)
+
+        assert drained == [simulation_id]
+        assert RunnerStatus.COMPLETED in statuses_while_alive
+        assert state.runner_status == RunnerStatus.COMPLETED
+        assert state.error is None
+        assert simulation_id not in SimulationRunner._graph_memory_enabled
+    finally:
+        SimulationRunner._processes.pop(simulation_id, None)
+        SimulationRunner._graph_memory_enabled.pop(simulation_id, None)
+        SimulationRunner._manual_stop_requests.discard(simulation_id)
+
+
+def test_platform_completion_drain_failure_publishes_failed(monkeypatch):
+    simulation_id = "sim-drain-failure"
+    state = SimulationRunState(
+        simulation_id=simulation_id,
+        runner_status=RunnerStatus.RUNNING,
+    )
+    saved = []
+    _patch_state_store(monkeypatch, state, saved)
+    monkeypatch.setattr(
+        runner_module.ZepGraphMemoryManager,
+        "stop_updater",
+        classmethod(
+            lambda _cls, _simulation_id: (_ for _ in ()).throw(
+                RuntimeError("ingestion incomplete")
+            )
+        ),
+    )
+    SimulationRunner._graph_memory_enabled[simulation_id] = True
+    try:
+        result = SimulationRunner._finalize_platforms_completed(simulation_id, state)
+
+        assert result.runner_status == RunnerStatus.FAILED
+        assert "ingestion incomplete" in result.error
+        assert saved == [RunnerStatus.STOPPING, RunnerStatus.FAILED]
+        # The updater is retained so a later stop can retry the drain.
+        assert SimulationRunner._graph_memory_enabled[simulation_id] is True
+    finally:
+        SimulationRunner._graph_memory_enabled.pop(simulation_id, None)
+
+
+def test_platform_completion_defers_to_manual_stop(monkeypatch):
+    simulation_id = "sim-manual-first"
+    state = SimulationRunState(
+        simulation_id=simulation_id,
+        runner_status=RunnerStatus.STOPPING,
+    )
+    _patch_state_store(monkeypatch, state)
+    drained = []
+    monkeypatch.setattr(
+        runner_module.ZepGraphMemoryManager,
+        "stop_updater",
+        classmethod(lambda _cls, sim_id: drained.append(sim_id)),
+    )
+    SimulationRunner._manual_stop_requests.add(simulation_id)
+    SimulationRunner._graph_memory_enabled[simulation_id] = True
+    try:
+        result = SimulationRunner._finalize_platforms_completed(simulation_id, state)
+
+        assert result.runner_status == RunnerStatus.STOPPING
+        assert drained == []
+    finally:
+        SimulationRunner._graph_memory_enabled.pop(simulation_id, None)
+        SimulationRunner._manual_stop_requests.discard(simulation_id)
+
+
+def test_stopping_completed_run_closes_process_and_keeps_completed(monkeypatch):
+    simulation_id = "sim-close-completed"
+    state = SimulationRunState(
+        simulation_id=simulation_id,
+        runner_status=RunnerStatus.COMPLETED,
+        completed_at="2026-01-01T00:00:00",
+    )
+    _patch_state_store(monkeypatch, state)
+    terminated = []
+    monkeypatch.setattr(
+        SimulationRunner,
+        "_terminate_process",
+        classmethod(lambda _cls, _process, sim_id, **_kwargs: terminated.append(sim_id)),
+    )
+
+    class Process:
+        def poll(self):
+            return None
+
+    SimulationRunner._processes[simulation_id] = Process()
+    try:
+        result = SimulationRunner.stop_simulation(simulation_id)
+
+        assert terminated == [simulation_id]
+        assert result.runner_status == RunnerStatus.COMPLETED
+        assert result.completed_at == "2026-01-01T00:00:00"
+        assert simulation_id not in SimulationRunner._manual_stop_requests
+    finally:
+        SimulationRunner._processes.pop(simulation_id, None)
+
+
 def test_manual_stop_timeout_leaves_monitor_owned_state_stopping(monkeypatch):
     state = SimulationRunState(
         simulation_id="sim-timeout",

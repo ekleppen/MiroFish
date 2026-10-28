@@ -400,7 +400,10 @@ def generate_ontology():
             response_status = 502
             logger.exception("LLM returned an unusable ontology response")
         elif isinstance(provider_status, int):
-            public_error = f"LLM provider request failed (HTTP {provider_status})"
+            if provider_status in (401, 403):
+                public_error = t('api.llmAuthFailed', status=provider_status)
+            else:
+                public_error = f"LLM provider request failed (HTTP {provider_status})"
             if request_id:
                 safe_request_id = re.sub(
                     r"[^a-zA-Z0-9._:-]", "", str(request_id)

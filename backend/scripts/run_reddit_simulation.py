@@ -46,6 +46,7 @@ else:
     if os.path.exists(_backend_env):
         load_dotenv(_backend_env)
 
+from round_schedule import build_round_schedule, full_round_count, select_active_agent_ids
 
 import re
 
@@ -475,40 +476,11 @@ class RedditSimulationRunner:
         """
         Decide which Agents to activate this round based on time and config
         """
-        time_config = self.config.get("time_config", {})
-        agent_configs = self.config.get("agent_configs", [])
-        
-        base_min = time_config.get("agents_per_hour_min", 5)
-        base_max = time_config.get("agents_per_hour_max", 20)
-        
-        peak_hours = time_config.get("peak_hours", [9, 10, 11, 14, 15, 20, 21, 22])
-        off_peak_hours = time_config.get("off_peak_hours", [0, 1, 2, 3, 4, 5])
-        
-        if current_hour in peak_hours:
-            multiplier = time_config.get("peak_activity_multiplier", 1.5)
-        elif current_hour in off_peak_hours:
-            multiplier = time_config.get("off_peak_activity_multiplier", 0.3)
-        else:
-            multiplier = 1.0
-        
-        target_count = int(random.uniform(base_min, base_max) * multiplier)
-        
-        candidates = []
-        for cfg in agent_configs:
-            agent_id = cfg.get("agent_id", 0)
-            active_hours = cfg.get("active_hours", list(range(8, 23)))
-            activity_level = cfg.get("activity_level", 0.5)
-            
-            if current_hour not in active_hours:
-                continue
-            
-            if random.random() < activity_level:
-                candidates.append(agent_id)
-        
-        selected_ids = random.sample(
-            candidates, 
-            min(target_count, len(candidates))
-        ) if candidates else []
+        selected_ids = select_active_agent_ids(
+            self.config.get("time_config", {}),
+            self.config.get("agent_configs", []),
+            current_hour,
+        )
         
         active_agents = []
         for agent_id in selected_ids:
@@ -536,14 +508,16 @@ class RedditSimulationRunner:
         time_config = self.config.get("time_config", {})
         total_hours = time_config.get("total_simulation_hours", 72)
         minutes_per_round = time_config.get("minutes_per_round", 30)
-        total_rounds = (total_hours * 60) // minutes_per_round
-        
-        # Truncate if a maximum number of rounds is specified
-        if max_rounds is not None and max_rounds > 0:
-            original_rounds = total_rounds
-            total_rounds = min(total_rounds, max_rounds)
-            if total_rounds < original_rounds:
-                print(f"\nRounds truncated: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
+        full_rounds = full_round_count(time_config)
+        schedule = build_round_schedule(
+            time_config, self.config.get("agent_configs", []), max_rounds
+        )
+        total_rounds = len(schedule)
+        if total_rounds < full_rounds:
+            print(
+                f"\nRounds truncated: {full_rounds} -> {total_rounds} (max_rounds={max_rounds}); "
+                f"rounds are spread across the simulated day"
+            )
         
         print(f"\nSimulation parameters:")
         print(f"  - Total simulated duration: {total_hours} hours")
@@ -623,16 +597,18 @@ class RedditSimulationRunner:
         print("\nStarting simulation loop...")
         start_time = datetime.now()
         
-        for round_num in range(total_rounds):
-            simulated_minutes = round_num * minutes_per_round
-            simulated_hour = (simulated_minutes // 60) % 24
-            simulated_day = simulated_minutes // (60 * 24) + 1
+        for slot in schedule:
+            round_num = slot["round_num"]
+            simulated_hour = slot["hour"]
+            simulated_day = slot["day"]
             
             active_agents = self._get_active_agents_for_round(
                 self.env, simulated_hour, round_num
             )
             
             if not active_agents:
+                print(f"  [Day {simulated_day}, {simulated_hour:02d}:00] "
+                      f"Round {round_num}/{total_rounds}: no agents active at this hour, skipped")
                 continue
             
             actions = {
@@ -642,13 +618,12 @@ class RedditSimulationRunner:
             
             await self.env.step(actions)
             
-            if (round_num + 1) % 10 == 0 or round_num == 0:
-                elapsed = (datetime.now() - start_time).total_seconds()
-                progress = (round_num + 1) / total_rounds * 100
-                print(f"  [Day {simulated_day}, {simulated_hour:02d}:00] "
-                      f"Round {round_num + 1}/{total_rounds} ({progress:.1f}%) "
-                      f"- {len(active_agents)} agents active "
-                      f"- elapsed: {elapsed:.1f}s")
+            elapsed = (datetime.now() - start_time).total_seconds()
+            progress = round_num / total_rounds * 100
+            print(f"  [Day {simulated_day}, {simulated_hour:02d}:00] "
+                  f"Round {round_num}/{total_rounds} ({progress:.1f}%) "
+                  f"- {len(active_agents)} agents active "
+                  f"- elapsed: {elapsed:.1f}s")
         
         total_elapsed = (datetime.now() - start_time).total_seconds()
         print(f"\nSimulation loop completed!")

@@ -70,6 +70,16 @@ export const getSimulationConfigRealtime = (simulationId) => {
 }
 
 /**
+ * Preview which simulated hours a run covers for a round count
+ * @param {string} simulationId
+ * @param {number} maxRounds - optional round limit
+ */
+export const getRoundPreview = (simulationId, maxRounds) => {
+  const params = maxRounds ? { max_rounds: maxRounds } : {}
+  return service.get(`/api/simulation/${simulationId}/round-preview`, { params })
+}
+
+/**
  * 列出所有模拟
  * @param {string} projectId - 可选，按项目ID过滤
  */
