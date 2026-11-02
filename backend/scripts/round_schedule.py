@@ -114,6 +114,18 @@ def eligible_agent_ids(agent_configs: List[Dict[str, Any]], hour: int) -> List[i
     ]
 
 
+def make_activation_rng(config: Dict[str, Any]) -> Optional[random.Random]:
+    """Seeded generator for Agent activation, or None when no seed is configured.
+
+    A run script builds one per platform before its round loop, so the same
+    config and seed activate the same Agents in every round.
+    """
+    seed = config.get("random_seed")
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        return None
+    return random.Random(seed)
+
+
 def select_active_agent_ids(
     time_config: Dict[str, Any],
     agent_configs: List[Dict[str, Any]],

@@ -16,7 +16,7 @@ from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 
-from openai import OpenAI
+from scripts.bedrock_converse import make_chat_client
 
 from ..config import Config
 from ..utils.logger import get_logger
@@ -236,9 +236,11 @@ class SimulationConfigGenerator:
         if not self.api_key:
             raise ValueError("LLM_API_KEY is not configured")
         
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url
+        self.client = make_chat_client(
+            self.api_key,
+            self.base_url,
+            provider=Config.LLM_PROVIDER,
+            region=Config.AWS_REGION,
         )
     
     def generate_config(

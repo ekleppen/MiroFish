@@ -127,6 +127,25 @@ LLM_MODEL_NAME=qwen-plus
 ZEP_API_KEY=your_zep_api_key
 ```
 
+**Using Claude on Amazon Bedrock (optional):**
+
+Set `LLM_PROVIDER=bedrock` to call Claude through the Bedrock Converse API. This works for both the backend and the simulation agents, and it doesn't use a proxy. `LLM_API_KEY` holds a Bedrock API key, and `LLM_BASE_URL` is ignored.
+
+```env
+LLM_PROVIDER=bedrock
+LLM_API_KEY=your_bedrock_api_key
+LLM_MODEL_NAME=us.anthropic.claude-haiku-5-5
+AWS_REGION=us-east-1
+# Optional: provider for the boost LLM (defaults to LLM_PROVIDER)
+# LLM_BOOST_PROVIDER=bedrock
+```
+
+Use a long-term Bedrock API key (it starts with `ABSK`), because short-term keys expire within 12 hours. The model must be enabled for your account in the Bedrock console. Restart the backend after changing `.env`. You can check the setup with `cd backend && uv run python scripts/check_llm.py`.
+
+**Skipping simulation memory in Zep (optional):**
+
+By default, agent actions are written into the Zep graph during a simulation. Zep processes each batch with its own extraction, which can take minutes after the run. The simulation is marked complete right away, and only report generation waits for this sync. Set `ZEP_SIMULATION_MEMORY=false` to skip the step entirely. The report still gets agent actions from the local action logs; the document graph is built and used either way.
+
 #### 2. Install Dependencies
 
 ```bash

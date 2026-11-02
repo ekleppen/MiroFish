@@ -115,6 +115,13 @@ def generate_report():
                     "before generating a report"
                 ),
             }), 409
+        if getattr(run_state, "graph_sync_status", None) == "failed":
+            logger.warning(
+                "Generating report while simulation memories are only partly in the graph: "
+                "simulation_id=%s, graph_sync_error=%s",
+                simulation_id,
+                run_state.graph_sync_error,
+            )
 
         # Get project info
         project = ProjectManager.get_project(state.project_id)

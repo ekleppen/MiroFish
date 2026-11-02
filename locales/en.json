@@ -217,6 +217,12 @@
     "bannerSaving": "Simulation finished, saving memories to the graph...",
     "bannerStopping": "Stopping simulation, saving memories to the graph...",
     "bannerCompleted": "Simulation finished; the environment stays open for agent interviews. You can generate the report now.",
+    "bannerGraphSyncing": "Simulation complete; syncing memories to the graph. The report will be available when this finishes.",
+    "bannerGraphSyncFailed": "Simulation complete, but not all memories reached the graph. The report can still be generated from the actions that did.",
+    "waitingGraphSyncBtn": "Syncing graph...",
+    "graphSyncingLog": "Simulation complete; syncing memories to the graph before the report...",
+    "graphSyncDoneLog": "Graph sync finished; the report is ready to generate",
+    "graphSyncFailedLog": "Graph sync incomplete: {error}",
     "bannerNoActivity": "No agents have acted in {count} rounds so far. Their active hours may not overlap the simulated time; consider running more rounds."
   },
   "step4": {
@@ -776,5 +782,39 @@
       "defaultCountry": "China",
       "profileProgress": "Completed {current}/{total}: {name} ({type})"
     }
+  },
+  "population": {
+    "notFound": "Population not found: {id}",
+    "requireGuestsFile": "Upload a synthetic_guests.jsonl file in the 'guests' field",
+    "invalidFileType": "The guests file must be a .jsonl file",
+    "invalidAssumptions": "The assumptions file must be a valid JSON object",
+    "invalidNumber": "{field} must be an integer",
+    "invalidBoolean": "{field} must be a JSON boolean",
+    "invalidPersonaSource": "persona_source must be 'enriched' or 'template'",
+    "frozen": "Population {id} already has simulations or experiments, so its personas are frozen. Upload the file again to enrich a new copy.",
+    "enrichmentRunning": "Persona enrichment is already running for population {id}",
+    "enrichmentRequired": "Run persona enrichment to completion before creating an enriched simulation",
+    "enrichStarted": "Persona enrichment started",
+    "enrichProgress": "Enriching personas: {current}/{total}"
+  },
+  "experiments": {
+    "notFound": "Experiment not found: {id}",
+    "requirePopulation": "population_id is required",
+    "invalidEngine": "Unknown engine: {engine}. Use 'direct'.",
+    "engineNotImplemented": "The {engine} engine isn't available yet. Use 'direct'.",
+    "invalidVariants": "Invalid variants: {error}",
+    "outOfRange": "{field} must be between {min} and {max}",
+    "invalidEffort": "reasoning_effort must be one of: {values}",
+    "running": "Experiment {id} is already running or being analyzed",
+    "notCompleted": "Experiment {id} must finish running before it can be analyzed",
+    "runStarted": "Experiment started",
+    "propensityProgress": "Estimating reply likelihood: {current}/{total}",
+    "writingProgress": "Drawing responders and writing replies: {current}/{total}",
+    "invalidCalibration": "Invalid response_calibration: {error}",
+    "unknownBaseline": "Calibration baseline variant \"{id}\" is not one of this experiment's variants",
+    "notCalibrated": "No target reply rate is configured, so reply probabilities are the LLM's uncalibrated estimates",
+    "invalidFlag": "flag must be one of: {values}",
+    "analyzeStarted": "Coding replies",
+    "analyzeProgress": "Coding replies: {current}/{total}"
   }
 }

@@ -7,7 +7,7 @@ import json
 import logging
 import re
 from typing import Optional, Dict, Any, List
-from openai import OpenAI
+from scripts.bedrock_converse import is_bedrock_provider, make_chat_client
 
 from ..config import Config
 from .openai_chat_compat import create_chat_completion, extract_chat_completion_text
@@ -104,9 +104,12 @@ class LLMClient:
         if not self.api_key:
             raise ValueError("LLM_API_KEY is not configured")
         
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url
+        self.is_bedrock = is_bedrock_provider(Config.LLM_PROVIDER)
+        self.client = make_chat_client(
+            self.api_key,
+            self.base_url,
+            provider=Config.LLM_PROVIDER,
+            region=Config.AWS_REGION,
         )
 
     def _create_completion(
@@ -116,9 +119,12 @@ class LLMClient:
         temperature: Optional[float],
         max_tokens: Optional[int],
         response_format: Optional[Dict[str, Any]],
+        reasoning_effort: Optional[str] = None,
     ) -> Any:
         """Send one raw Chat Completions request through the compatibility layer."""
 
+        # Effort maps to Bedrock's output_config.effort; OpenAI models that
+        # don't reason would reject the parameter, so it is Bedrock-only.
         return create_chat_completion(
             self.client,
             model=self.model,
@@ -126,6 +132,7 @@ class LLMClient:
             temperature=temperature,
             max_tokens=max_tokens,
             response_format=response_format,
+            reasoning_effort=reasoning_effort if getattr(self, "is_bedrock", False) else None,
         )
     
     def chat(
@@ -162,6 +169,7 @@ class LLMClient:
         temperature: float = 0.3,
         max_tokens: Optional[int] = 4096,
         max_attempts: int = 1,
+        reasoning_effort: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Send a chat request and return JSON
@@ -171,6 +179,7 @@ class LLMClient:
             temperature: Temperature parameter
             max_tokens: Maximum number of tokens
             max_attempts: Number of content generation attempts (excluding one explicit JSON-mode capability fallback)
+            reasoning_effort: Thinking effort (e.g. "low"); applied on Bedrock only
             
         Returns:
             Parsed JSON object
@@ -193,6 +202,7 @@ class LLMClient:
                         temperature=temperature,
                         max_tokens=request_max_tokens,
                         response_format=response_format,
+                        reasoning_effort=reasoning_effort,
                     )
                 except Exception as error:
                     if (
@@ -240,8 +250,10 @@ class LLMClient:
         choice = choices[0]
         finish_reason = getattr(choice, "finish_reason", None)
         if finish_reason == "length":
+            output_tokens = getattr(getattr(response, "usage", None), "completion_tokens", None)
+            detail = f" ({output_tokens} output tokens)" if output_tokens else ""
             raise LLMResponseError(
-                "LLM JSON output was truncated at the token limit",
+                f"LLM JSON output was truncated at the token limit{detail}",
                 finish_reason=finish_reason,
             )
         if finish_reason not in {None, "stop"}:

@@ -217,6 +217,12 @@
     "bannerSaving": "模拟已结束，正在将记忆写入图谱...",
     "bannerStopping": "正在停止模拟，并将记忆写入图谱...",
     "bannerCompleted": "模拟已结束，环境保持开启以便采访 Agent。现在可以生成报告。",
+    "bannerGraphSyncing": "模拟已完成，正在将记忆同步到图谱。同步完成后即可生成报告。",
+    "bannerGraphSyncFailed": "模拟已完成，但部分记忆未写入图谱。仍可基于已写入的动作生成报告。",
+    "waitingGraphSyncBtn": "正在同步图谱...",
+    "graphSyncingLog": "模拟已完成，生成报告前正在将记忆同步到图谱...",
+    "graphSyncDoneLog": "图谱同步完成，可以生成报告",
+    "graphSyncFailedLog": "图谱同步未完成: {error}",
     "bannerNoActivity": "目前已有 {count} 轮没有任何 Agent 行动。Agent 的活跃时段可能与模拟时间不重叠，建议增加模拟轮数。"
   },
   "step4": {
@@ -776,5 +782,39 @@
       "defaultCountry": "中国",
       "profileProgress": "已完成 {current}/{total}: {name}（{type}）"
     }
+  },
+  "population": {
+    "notFound": "未找到人群：{id}",
+    "requireGuestsFile": "请在 'guests' 字段上传 synthetic_guests.jsonl 文件",
+    "invalidFileType": "客人文件必须是 .jsonl 文件",
+    "invalidAssumptions": "假设文件必须是有效的 JSON 对象",
+    "invalidNumber": "{field} 必须是整数",
+    "invalidBoolean": "{field} 必须是 JSON 布尔值",
+    "invalidPersonaSource": "persona_source 必须是 'enriched' 或 'template'",
+    "frozen": "人群 {id} 已有模拟或实验，其人设已冻结。请重新上传文件以丰富新的副本。",
+    "enrichmentRunning": "人群 {id} 的人设丰富正在进行中",
+    "enrichmentRequired": "请先完成人设丰富，再创建使用丰富人设的模拟",
+    "enrichStarted": "人设丰富已开始",
+    "enrichProgress": "正在丰富人设：{current}/{total}"
+  },
+  "experiments": {
+    "notFound": "未找到实验：{id}",
+    "requirePopulation": "必须提供 population_id",
+    "invalidEngine": "未知引擎：{engine}。请使用 'direct'。",
+    "engineNotImplemented": "{engine} 引擎尚不可用。请使用 'direct'。",
+    "invalidVariants": "消息变体无效：{error}",
+    "outOfRange": "{field} 必须介于 {min} 和 {max} 之间",
+    "invalidEffort": "reasoning_effort 必须是以下之一：{values}",
+    "running": "实验 {id} 正在运行或分析中",
+    "notCompleted": "实验 {id} 必须先运行完成才能分析",
+    "runStarted": "实验已开始",
+    "propensityProgress": "正在估计回复可能性：{current}/{total}",
+    "writingProgress": "正在抽取回复者并撰写回复：{current}/{total}",
+    "invalidCalibration": "response_calibration 无效：{error}",
+    "unknownBaseline": "校准基线变体“{id}”不是本实验的变体",
+    "notCalibrated": "未配置目标回复率，回复概率为 LLM 未经校准的估计值",
+    "invalidFlag": "flag 必须是以下之一：{values}",
+    "analyzeStarted": "正在编码回复",
+    "analyzeProgress": "正在编码回复：{current}/{total}"
   }
 }

@@ -1598,6 +1598,9 @@ def start_simulation():
                 "success": False,
                 "error": "enable_graph_memory_update must be a JSON boolean",
             }), 400
+        if enable_graph_memory_update and not Config.ZEP_SIMULATION_MEMORY:
+            logger.info("Graph memory updates disabled by ZEP_SIMULATION_MEMORY: simulation_id=%s", simulation_id)
+            enable_graph_memory_update = False
         if not isinstance(force, bool):
             return jsonify({
                 "success": False,

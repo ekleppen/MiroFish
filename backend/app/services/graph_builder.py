@@ -22,6 +22,7 @@ from ..utils.ontology import (
     normalize_ontology_source_targets,
 )
 from ..utils.zep import (
+    ZEP_INGESTION_MAX_WAIT_SECONDS,
     ZEP_INGESTION_WAIT_TIMEOUT_SECONDS,
     call_zep_read_with_retry,
     get_zep_client,
@@ -29,6 +30,9 @@ from ..utils.zep import (
 )
 from .text_processor import TextProcessor
 from ..utils.locale import t, get_locale, set_locale
+from ..utils.logger import get_logger
+
+logger = get_logger('mirofish.graph_builder')
 
 
 @dataclass
@@ -636,14 +640,22 @@ class GraphBuilderService:
     ) -> List[str]:
         """Wait for a Batch API terminal state and validate every item."""
 
-        timeout = timeout or ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
+        stall_timeout = timeout or ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
+        max_wait = max(stall_timeout, ZEP_INGESTION_MAX_WAIT_SECONDS)
         start_time = time.time()
+        last_progress_time = start_time
+        last_progress = None
+        completed = 0
         terminal_states = {"succeeded", "partial", "failed", "invalid", "canceled"}
 
         while True:
-            if time.time() - start_time > timeout:
+            now = time.time()
+            if now - last_progress_time > stall_timeout or now - start_time > max_wait:
                 raise TimeoutError(
-                    f"Zep batch {submission.batch_id} did not finish within {timeout}s"
+                    f"Zep batch {submission.batch_id} did not finish: "
+                    f"{completed}/{submission.item_count} items done after "
+                    f"{int(now - start_time)}s, no progress for "
+                    f"{int(now - last_progress_time)}s"
                 )
 
             summary = call_zep_read_with_retry(
@@ -653,8 +665,20 @@ class GraphBuilderService:
             status = getattr(summary, "status", None)
             progress = getattr(summary, "progress", None)
             percent = float(getattr(progress, "percent_complete", 0) or 0) / 100
+            completed = int(getattr(progress, "succeeded_items", 0) or 0)
+            if (status, completed, percent) != last_progress:
+                if last_progress is not None:
+                    last_progress_time = now
+                last_progress = (status, completed, percent)
+                logger.info(
+                    "Zep batch %s: status=%s %d/%d items (%ds)",
+                    submission.batch_id,
+                    status,
+                    completed,
+                    submission.item_count,
+                    int(now - start_time),
+                )
             if progress_callback:
-                completed = int(getattr(progress, "succeeded_items", 0) or 0)
                 progress_callback(
                     t(
                         'progress.zepProcessing',

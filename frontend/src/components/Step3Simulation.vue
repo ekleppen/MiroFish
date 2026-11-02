@@ -93,12 +93,18 @@
       <div class="action-controls">
         <button 
           class="action-btn primary"
-          :disabled="phase !== 2 || isGeneratingReport"
+          :disabled="phase !== 2 || isGeneratingReport || graphSyncPending"
           @click="handleNextStep"
         >
-          <span v-if="isGeneratingReport" class="loading-spinner-small"></span>
-          {{ isGeneratingReport ? $t('step3.generatingReportBtn') : $t('step3.startGenerateReportBtn') }}
-          <span v-if="!isGeneratingReport" class="arrow-icon">→</span>
+          <span v-if="isGeneratingReport || graphSyncPending" class="loading-spinner-small"></span>
+          {{
+            isGeneratingReport
+              ? $t('step3.generatingReportBtn')
+              : graphSyncPending
+                ? $t('step3.waitingGraphSyncBtn')
+                : $t('step3.startGenerateReportBtn')
+          }}
+          <span v-if="!isGeneratingReport && !graphSyncPending" class="arrow-icon">→</span>
         </button>
       </div>
     </div>
@@ -377,6 +383,9 @@ const redditElapsedTime = computed(() => {
 // Rounds so far in which no Agent was awake, if every round so far was empty
 const allEmptyRounds = (empty, current) => (current > 0 && empty >= current ? empty : 0)
 
+// Simulation memories still going into the Zep graph; the report waits for this
+const graphSyncPending = computed(() => runStatus.value?.graph_sync_status === 'pending')
+
 const statusBanner = computed(() => {
   const data = runStatus.value || {}
   if (data.runner_status === 'stopping') {
@@ -386,6 +395,12 @@ const statusBanner = computed(() => {
     }
   }
   if (data.runner_status === 'completed') {
+    if (data.graph_sync_status === 'pending') {
+      return { kind: 'saving', text: t('step3.bannerGraphSyncing') }
+    }
+    if (data.graph_sync_status === 'failed') {
+      return { kind: 'warn', text: t('step3.bannerGraphSyncFailed') }
+    }
     return { kind: 'done', text: t('step3.bannerCompleted') }
   }
   const emptyRounds = Math.max(
@@ -412,6 +427,8 @@ const resetAllState = () => {
   prevTwitterRound.value = 0
   prevRedditRound.value = 0
   savingLogged.value = false
+  completedLogged.value = false
+  graphSyncLogged.value = false
   startError.value = null
   isStarting.value = false
   isStopping.value = false
@@ -529,6 +546,8 @@ const stopPolling = () => {
 const prevTwitterRound = ref(0)
 const prevRedditRound = ref(0)
 const savingLogged = ref(false)
+const completedLogged = ref(false)
+const graphSyncLogged = ref(false)
 
 const formatHours = (hours) => Math.round((hours || 0) * 10) / 10
 
@@ -597,10 +616,28 @@ const fetchRunStatus = async () => {
         stopPolling()
         emit('update-status', 'error')
       } else if (isCompleted) {
-        addLog(t('log.simCompleted'))
-        phase.value = 2
-        stopPolling()
-        emit('update-status', 'completed')
+        if (!completedLogged.value) {
+          addLog(t('log.simCompleted'))
+          completedLogged.value = true
+          phase.value = 2
+          emit('update-status', 'completed')
+        }
+        // Keep polling while memories sync to the graph so the report unlocks
+        if (data.graph_sync_status === 'pending') {
+          if (!graphSyncLogged.value) {
+            addLog(t('step3.graphSyncingLog'))
+            graphSyncLogged.value = true
+          }
+        } else {
+          if (graphSyncLogged.value) {
+            addLog(
+              data.graph_sync_status === 'failed'
+                ? t('step3.graphSyncFailedLog', { error: data.graph_sync_error || t('common.unknownError') })
+                : t('step3.graphSyncDoneLog')
+            )
+          }
+          stopPolling()
+        }
       }
     }
   } catch (err) {

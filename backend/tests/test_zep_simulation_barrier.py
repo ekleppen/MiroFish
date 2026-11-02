@@ -150,6 +150,7 @@ def test_monitor_completes_while_process_stays_open_for_interviews(
         "stop_updater",
         classmethod(lambda _cls, sim_id: drained.append(sim_id)),
     )
+    _run_graph_sync_inline(monkeypatch)
     statuses_while_alive = []
 
     class Process:
@@ -180,7 +181,43 @@ def test_monitor_completes_while_process_stays_open_for_interviews(
         SimulationRunner._manual_stop_requests.discard(simulation_id)
 
 
-def test_platform_completion_drain_failure_publishes_failed(monkeypatch):
+def _run_graph_sync_inline(monkeypatch):
+    monkeypatch.setattr(
+        SimulationRunner,
+        "_start_graph_sync",
+        classmethod(lambda cls, sim_id: cls._run_graph_sync(sim_id, runner_module.get_locale())),
+    )
+
+
+def test_platform_completion_publishes_completed_before_graph_sync(monkeypatch):
+    simulation_id = "sim-sync-order"
+    state = SimulationRunState(simulation_id=simulation_id, runner_status=RunnerStatus.RUNNING)
+    _patch_state_store(monkeypatch, state)
+    seen_during_drain = []
+    monkeypatch.setattr(
+        runner_module.ZepGraphMemoryManager,
+        "stop_updater",
+        classmethod(
+            lambda _cls, _sim_id: seen_during_drain.append(
+                (state.runner_status, state.graph_sync_status)
+            )
+        ),
+    )
+    _run_graph_sync_inline(monkeypatch)
+    SimulationRunner._graph_memory_enabled[simulation_id] = True
+    try:
+        result = SimulationRunner._finalize_platforms_completed(simulation_id, state)
+
+        assert seen_during_drain == [(RunnerStatus.COMPLETED, "pending")]
+        assert result.runner_status == RunnerStatus.COMPLETED
+        assert result.graph_sync_status == "done"
+        assert result.graph_sync_error is None
+        assert simulation_id not in SimulationRunner._graph_memory_enabled
+    finally:
+        SimulationRunner._graph_memory_enabled.pop(simulation_id, None)
+
+
+def test_graph_sync_failure_keeps_completed_and_releases_updater(monkeypatch):
     simulation_id = "sim-drain-failure"
     state = SimulationRunState(
         simulation_id=simulation_id,
@@ -197,17 +234,47 @@ def test_platform_completion_drain_failure_publishes_failed(monkeypatch):
             )
         ),
     )
+    abandoned = []
+    monkeypatch.setattr(
+        runner_module.ZepGraphMemoryManager,
+        "abandon_updater",
+        classmethod(lambda _cls, sim_id: abandoned.append(sim_id)),
+    )
+    _run_graph_sync_inline(monkeypatch)
     SimulationRunner._graph_memory_enabled[simulation_id] = True
     try:
         result = SimulationRunner._finalize_platforms_completed(simulation_id, state)
 
-        assert result.runner_status == RunnerStatus.FAILED
-        assert "ingestion incomplete" in result.error
-        assert saved == [RunnerStatus.STOPPING, RunnerStatus.FAILED]
-        # The updater is retained so a later stop can retry the drain.
-        assert SimulationRunner._graph_memory_enabled[simulation_id] is True
+        assert result.runner_status == RunnerStatus.COMPLETED
+        assert result.error is None
+        assert result.graph_sync_status == "failed"
+        assert "ingestion incomplete" in result.graph_sync_error
+        assert RunnerStatus.FAILED not in saved
+        assert abandoned == [simulation_id]
     finally:
         SimulationRunner._graph_memory_enabled.pop(simulation_id, None)
+
+
+def test_pending_graph_sync_loaded_after_restart_is_failed(monkeypatch, tmp_path):
+    simulation_id = "sim-restarted"
+    run_dir = tmp_path / simulation_id
+    run_dir.mkdir()
+    (run_dir / "run_state.json").write_text(
+        json.dumps({
+            "simulation_id": simulation_id,
+            "runner_status": "completed",
+            "graph_sync_status": "pending",
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(SimulationRunner, "RUN_STATE_DIR", str(tmp_path))
+
+    state = SimulationRunner._load_run_state(simulation_id)
+
+    assert state.runner_status == RunnerStatus.COMPLETED
+    assert state.graph_sync_status == "failed"
+    assert "restart" in state.graph_sync_error
+    assert state.to_dict()["graph_sync_status"] == "failed"
 
 
 def test_platform_completion_defers_to_manual_stop(monkeypatch):
@@ -472,7 +539,7 @@ def test_monitor_start_failure_terminates_the_spawned_process(monkeypatch, tmp_p
         }),
         encoding="utf-8",
     )
-    (scripts_dir / "run_twitter_simulation.py").write_text("pass\n", encoding="utf-8")
+    (scripts_dir / "run_parallel_simulation.py").write_text("pass\n", encoding="utf-8")
 
     class Process:
         pid = 123

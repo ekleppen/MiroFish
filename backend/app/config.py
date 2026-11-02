@@ -28,9 +28,17 @@ class Config:
     LLM_API_KEY = os.environ.get('LLM_API_KEY')
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+    # "bedrock" routes calls through the Bedrock Converse adapter; empty means OpenAI-compatible
+    LLM_PROVIDER = os.environ.get('LLM_PROVIDER', '')
+    AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
     
     # Zep configuration
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
+    # Write agent actions into the Zep graph during simulations. Off skips the
+    # slowest Zep step; reports then read actions from the local action logs.
+    ZEP_SIMULATION_MEMORY = os.environ.get('ZEP_SIMULATION_MEMORY', 'true').strip().lower() not in {
+        'false', '0', 'no', 'off'
+    }
     
     # File upload configuration
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
@@ -38,8 +46,10 @@ class Config:
     ALLOWED_EXTENSIONS = {'pdf', 'md', 'txt', 'markdown'}
     
     # Text processing configuration
-    DEFAULT_CHUNK_SIZE = 500  # Default chunk size
-    DEFAULT_CHUNK_OVERLAP = 50  # Default overlap size
+    # Each chunk is one Zep episode processed at a few seconds apiece, so larger
+    # chunks build the graph much faster and give extraction more context
+    DEFAULT_CHUNK_SIZE = 2000
+    DEFAULT_CHUNK_OVERLAP = 200
     
     # OASIS simulation configuration
     OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '10'))
@@ -66,6 +76,17 @@ class Config:
         errors: list[str] = []
         if not cls.LLM_API_KEY:
             errors.append("LLM_API_KEY is not configured")
+        provider = cls.LLM_PROVIDER.strip().lower()
+        if provider not in ("", "openai", "bedrock"):
+            errors.append(f"LLM_PROVIDER must be empty, 'openai' or 'bedrock', got '{cls.LLM_PROVIDER}'")
+        if provider == "bedrock":
+            try:
+                import botocore
+                major, minor = (int(part) for part in botocore.__version__.split(".")[:2])
+                if (major, minor) < (1, 39):
+                    errors.append(f"LLM_PROVIDER=bedrock needs botocore>=1.39, found {botocore.__version__}")
+            except ImportError:
+                errors.append("LLM_PROVIDER=bedrock needs boto3; run `uv sync` in backend/")
         if not cls.ZEP_API_KEY:
             errors.append("ZEP_API_KEY is not configured")
         if os.environ.get("ZEP_API_URL"):

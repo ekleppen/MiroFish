@@ -156,6 +156,11 @@ class SimulationRunState:
     
     # Error message
     error: Optional[str] = None
+
+    # Zep graph sync of simulation memories, tracked apart from runner_status:
+    # none (not enabled), pending, done, failed
+    graph_sync_status: str = "none"
+    graph_sync_error: Optional[str] = None
     
     # Process ID (used for stopping)
     process_pid: Optional[int] = None
@@ -204,6 +209,8 @@ class SimulationRunState:
             "updated_at": self.updated_at,
             "completed_at": self.completed_at,
             "error": self.error,
+            "graph_sync_status": self.graph_sync_status,
+            "graph_sync_error": self.graph_sync_error,
             "process_pid": self.process_pid,
         }
     
@@ -350,8 +357,14 @@ class SimulationRunner:
                 updated_at=data.get("updated_at", datetime.now().isoformat()),
                 completed_at=data.get("completed_at"),
                 error=data.get("error"),
+                graph_sync_status=data.get("graph_sync_status", "none"),
+                graph_sync_error=data.get("graph_sync_error"),
                 process_pid=data.get("process_pid"),
             )
+            if state.graph_sync_status == "pending":
+                # The updater lived in a previous backend process
+                state.graph_sync_status = "failed"
+                state.graph_sync_error = state.graph_sync_error or "Graph sync was interrupted by a backend restart"
             
             # Load recent actions
             actions_data = data.get("recent_actions", [])
@@ -482,9 +495,13 @@ class SimulationRunner:
         else:
             cls._graph_memory_enabled[simulation_id] = False
         
-        # Determine which script to run (scripts live in backend/scripts/)
+        # Determine which script to run (scripts live in backend/scripts/).
+        # Twitter-only runs use the parallel script because only it writes
+        # twitter/actions.jsonl, which the monitor needs to detect completion.
+        script_args: List[str] = []
         if platform == "twitter":
-            script_name = "run_twitter_simulation.py"
+            script_name = "run_parallel_simulation.py"
+            script_args = ["--twitter-only"]
             state.twitter_running = True
         elif platform == "reddit":
             script_name = "run_reddit_simulation.py"
@@ -538,6 +555,7 @@ class SimulationRunner:
                 sys.executable,  # Python interpreter
                 script_path,
                 "--config", config_path,  # Use the full config file path
+                *script_args,
             ]
             
             # If a max round count is specified, add it to the command-line args
@@ -698,6 +716,7 @@ class SimulationRunner:
             # Manual stop and natural completion can observe the same process
             # exit. Serialize terminal state and updater drain so only one path
             # owns the final result.
+            sync_graph = False
             with cls._finalization_lock(simulation_id):
                 latest_state = cls.get_run_state(simulation_id)
                 if latest_state is not None:
@@ -739,9 +758,13 @@ class SimulationRunner:
                     state.twitter_running = False
                     state.reddit_running = False
 
-                    if cls._graph_memory_enabled.get(simulation_id, False):
+                    if not manual_stop:
+                        # Natural exits publish their status now and drain Zep
+                        # in the background; the updater keeps blocking reports.
+                        sync_graph = cls._claim_graph_sync(simulation_id, state)
+                    elif cls._graph_memory_enabled.get(simulation_id, False):
                         # STOPPING is a non-terminal ingestion barrier. The UI
-                        # and report API must not observe COMPLETED until every
+                        # and report API must not observe STOPPED until every
                         # accepted episode is processed by Zep Cloud.
                         state.runner_status = RunnerStatus.STOPPING
                         cls._save_run_state(state)
@@ -775,6 +798,8 @@ class SimulationRunner:
                     else:
                         logger.error(f"Simulation failed: {simulation_id}, error={state.error}")
                 cls._manual_stop_requests.discard(simulation_id)
+            if sync_graph:
+                cls._start_graph_sync(simulation_id)
             
             # Clean up process resources
             cls._processes.pop(simulation_id, None)
@@ -936,7 +961,8 @@ class SimulationRunner:
         """Publish the terminal status once every platform has finished its rounds.
 
         The simulation process keeps running afterwards so agents can still be
-        interviewed. COMPLETED is only published after Zep ingestion drains.
+        interviewed. COMPLETED is published right away; Zep ingestion drains in
+        the background and is reported through graph_sync_status.
         """
         with cls._finalization_lock(simulation_id):
             latest_state = cls.get_run_state(simulation_id)
@@ -954,37 +980,67 @@ class SimulationRunner:
 
             state.twitter_running = False
             state.reddit_running = False
-            desired_status = RunnerStatus.COMPLETED
-            error_message = None
+            sync_graph = cls._claim_graph_sync(simulation_id, state)
 
-            if cls._graph_memory_enabled.get(simulation_id, False):
-                state.runner_status = RunnerStatus.STOPPING
-                cls._save_run_state(state)
-                cls._sync_simulation_status(simulation_id, RunnerStatus.STOPPING)
-                try:
-                    ZepGraphMemoryManager.stop_updater(simulation_id)
-                    cls._graph_memory_enabled.pop(simulation_id, None)
-                    logger.info(
-                        "Graph memory updates stopped: simulation_id=%s",
-                        simulation_id,
-                    )
-                except Exception as error:
-                    logger.error(f"Failed to stop graph memory updater: {error}")
-                    desired_status = RunnerStatus.FAILED
-                    error_message = t('backend.simulationRunner.graphWriteIncomplete', error=error)
-
-            state.runner_status = desired_status
-            state.error = error_message
+            state.runner_status = RunnerStatus.COMPLETED
+            state.error = None
             state.completed_at = datetime.now().isoformat()
             cls._save_run_state(state)
-            cls._sync_simulation_status(simulation_id, desired_status, error_message)
-            if desired_status == RunnerStatus.COMPLETED:
-                logger.info(
-                    f"Simulation completed; environment stays open for interviews: {simulation_id}"
-                )
-            else:
-                logger.error(f"Simulation failed: {simulation_id}, error={state.error}")
-            return state
+            cls._sync_simulation_status(simulation_id, RunnerStatus.COMPLETED)
+            logger.info(
+                f"Simulation completed; environment stays open for interviews: {simulation_id}"
+            )
+
+        if sync_graph:
+            cls._start_graph_sync(simulation_id)
+        return state
+
+    @classmethod
+    def _claim_graph_sync(cls, simulation_id: str, state: SimulationRunState) -> bool:
+        """Mark graph sync pending and take ownership of the updater drain.
+
+        Clearing _graph_memory_enabled keeps stop/cleanup paths from draining
+        the same updater concurrently; the registered updater still blocks
+        reports and graph deletion until the background drain finishes.
+        """
+        if not cls._graph_memory_enabled.pop(simulation_id, False):
+            return False
+        state.graph_sync_status = "pending"
+        state.graph_sync_error = None
+        return True
+
+    @classmethod
+    def _start_graph_sync(cls, simulation_id: str) -> None:
+        threading.Thread(
+            target=cls._run_graph_sync,
+            args=(simulation_id, get_locale()),
+            daemon=True,
+            name=f"GraphSync-{simulation_id[:16]}",
+        ).start()
+
+    @classmethod
+    def _run_graph_sync(cls, simulation_id: str, locale: str) -> None:
+        set_locale(locale)
+        sync_status, sync_error = "done", None
+        try:
+            ZepGraphMemoryManager.stop_updater(simulation_id)
+            logger.info("Graph memory sync finished: simulation_id=%s", simulation_id)
+        except Exception as error:
+            sync_status, sync_error = "failed", str(error)[:500]
+            logger.error(
+                "Graph memory sync failed; reports will use the graph as it is: "
+                "simulation_id=%s, error=%s",
+                simulation_id,
+                sync_error,
+            )
+            ZepGraphMemoryManager.abandon_updater(simulation_id)
+
+        with cls._finalization_lock(simulation_id):
+            state = cls.get_run_state(simulation_id)
+            if state is not None:
+                state.graph_sync_status = sync_status
+                state.graph_sync_error = sync_error
+                cls._save_run_state(state)
 
     @classmethod
     def _check_all_platforms_completed(cls, state: SimulationRunState) -> bool:

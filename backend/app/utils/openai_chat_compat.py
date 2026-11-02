@@ -25,6 +25,7 @@ def create_chat_completion(
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
     response_format: Optional[Dict[str, Any]] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> Any:
     """
     Create a chat completion with model-specific request parameters.
@@ -53,6 +54,9 @@ def create_chat_completion(
             kwargs["max_completion_tokens"] = max_tokens
         else:
             kwargs["max_tokens"] = max_tokens
+
+    if reasoning_effort is not None:
+        kwargs["reasoning_effort"] = reasoning_effort
 
     return client.chat.completions.create(**kwargs)
 

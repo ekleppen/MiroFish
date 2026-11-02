@@ -14,6 +14,7 @@ from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.locale import get_locale, set_locale, t
 from ..utils.zep import (
+    ZEP_INGESTION_MAX_WAIT_SECONDS,
     ZEP_INGESTION_WAIT_TIMEOUT_SECONDS,
     call_zep_read_with_retry,
     get_zep_client,
@@ -340,7 +341,9 @@ class ZepGraphMemoryUpdater:
                 "simulation graph ingestion is incomplete"
             )
 
-        self._wait_for_pending_episodes(deadline=deadline)
+        # The fixed deadline only bounds the local drain above; Cloud
+        # processing may continue while episodes keep completing.
+        self._wait_for_pending_episodes()
         
         logger.info(f"ZepGraphMemoryUpdater stopped: graph_id={self.graph_id}, "
                    f"total_activities={self._total_activities}, "
@@ -601,18 +604,29 @@ class ZepGraphMemoryUpdater:
                     del self._platform_buffers[platform][:processed_count]
 
     def _wait_for_pending_episodes(self, *, deadline: float | None = None) -> None:
+        """Wait while Zep keeps processing episodes.
+
+        Fails after ZEP_INGESTION_WAIT_TIMEOUT_SECONDS without any newly
+        processed episode, or at the absolute deadline.
+        """
         pending = set(self._pending_episode_uuids)
         if not pending:
             return
 
+        start_time = time.time()
         if deadline is None:
-            deadline = time.time() + ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
+            deadline = start_time + ZEP_INGESTION_MAX_WAIT_SECONDS
+        total = len(pending)
+        last_progress_time = start_time
         while pending:
-            if time.time() >= deadline:
+            now = time.time()
+            if now - last_progress_time > ZEP_INGESTION_WAIT_TIMEOUT_SECONDS or now >= deadline:
                 raise TimeoutError(
-                    f"Zep simulation ingestion timed out with {len(pending)} "
-                    "episode(s) pending"
+                    f"Zep simulation ingestion timed out with {len(pending)}/{total} "
+                    f"episode(s) pending after {int(now - start_time)}s "
+                    f"(no progress for {int(now - last_progress_time)}s)"
                 )
+            before = len(pending)
             for episode_uuid in list(pending):
                 episode = call_zep_read_with_retry(
                     lambda: self.client.graph.episode.get(uuid_=episode_uuid),
@@ -620,6 +634,15 @@ class ZepGraphMemoryUpdater:
                 )
                 if getattr(episode, "processed", False):
                     pending.remove(episode_uuid)
+            if len(pending) < before:
+                last_progress_time = now
+                logger.info(
+                    "Zep simulation ingestion: graph_id=%s %d/%d episodes processed (%ds)",
+                    self.graph_id,
+                    total - len(pending),
+                    total,
+                    int(now - start_time),
+                )
             if pending:
                 time.sleep(3)
         self._pending_episode_uuids = []
@@ -747,6 +770,18 @@ class ZepGraphMemoryManager:
             if cls._updaters.get(simulation_id) is updater:
                 cls._updaters.pop(simulation_id, None)
         logger.info(f"Stopped graph memory updater: simulation_id={simulation_id}")
+
+    @classmethod
+    def abandon_updater(cls, simulation_id: str) -> None:
+        """Drop an updater whose drain failed so reports and deletion can proceed.
+
+        Episodes already accepted by Zep Cloud may still finish processing;
+        MiroFish just stops waiting for them.
+        """
+        with cls._lock:
+            updater = cls._updaters.pop(simulation_id, None)
+        if updater is not None:
+            logger.warning(f"Abandoned graph memory updater: simulation_id={simulation_id}")
     
     # Flag that prevents stop_all from running more than once
     _stop_all_done = False

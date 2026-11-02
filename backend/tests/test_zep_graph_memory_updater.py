@@ -195,6 +195,44 @@ def test_pending_episode_wait_has_a_deadline(monkeypatch):
         updater._wait_for_pending_episodes()
 
 
+def test_pending_episode_wait_continues_while_episodes_complete(monkeypatch):
+    updater = _updater(
+        monkeypatch,
+        lambda **_kwargs: SimpleNamespace(uuid_="episode-1"),
+    )
+    updater._pending_episode_uuids = ["ep-1", "ep-2", "ep-3"]
+    done_after_poll = {"ep-1": 1, "ep-2": 2, "ep-3": 3}
+    polls = {"count": 0}
+
+    def get_episode(uuid_):
+        return SimpleNamespace(processed=polls["count"] >= done_after_poll[uuid_])
+
+    def sleep(_seconds):
+        polls["count"] += 1
+
+    updater.client.graph.episode.get = get_episode
+    # Polls 8s apart against a 10s stall window: 24s total, never 10s idle
+    timestamps = iter([0.0, 0.0, 8.0, 16.0, 24.0])
+    monkeypatch.setattr(updater_module, "ZEP_INGESTION_WAIT_TIMEOUT_SECONDS", 10)
+    monkeypatch.setattr(updater_module, "logger", SimpleNamespace(info=lambda *_args: None))
+    monkeypatch.setattr(updater_module.time, "time", lambda: next(timestamps))
+    monkeypatch.setattr(updater_module.time, "sleep", sleep)
+
+    updater._wait_for_pending_episodes()
+
+    assert updater._pending_episode_uuids == []
+
+
+def test_abandon_updater_releases_a_failed_updater():
+    simulation_id = "sim-abandon"
+    ZepGraphMemoryManager._updaters[simulation_id] = object()
+    try:
+        ZepGraphMemoryManager.abandon_updater(simulation_id)
+        assert ZepGraphMemoryManager.get_updater(simulation_id) is None
+    finally:
+        ZepGraphMemoryManager._updaters.pop(simulation_id, None)
+
+
 def test_explicit_graph_destruction_can_discard_a_stopped_failed_updater():
     updater = SimpleNamespace(
         graph_id="graph-1",

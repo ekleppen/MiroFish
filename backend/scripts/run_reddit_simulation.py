@@ -46,7 +46,13 @@ else:
     if os.path.exists(_backend_env):
         load_dotenv(_backend_env)
 
-from round_schedule import build_round_schedule, full_round_count, select_active_agent_ids
+from round_schedule import (
+    build_round_schedule,
+    full_round_count,
+    make_activation_rng,
+    select_active_agent_ids,
+)
+from bedrock_converse import is_bedrock_provider, resolve_region
 
 import re
 
@@ -413,6 +419,7 @@ class RedditSimulationRunner:
         """
         self.config_path = config_path
         self.config = self._load_config()
+        self.activation_rng = make_activation_rng(self.config)
         self.simulation_dir = os.path.dirname(config_path)
         self.wait_for_commands = wait_for_commands
         self.env = None
@@ -449,6 +456,15 @@ class RedditSimulationRunner:
         # Fall back to config if not set in .env
         if not llm_model:
             llm_model = self.config.get("llm_model", "gpt-4o-mini")
+
+        if is_bedrock_provider(os.environ.get("LLM_PROVIDER", "")):
+            if not llm_api_key:
+                raise ValueError("Missing API key configuration. Set LLM_API_KEY in the .env file at the project root.")
+            from camel_bedrock_model import BedrockConverseModel
+
+            region = resolve_region()
+            print(f"LLM config: provider=bedrock model={llm_model}, region={region}")
+            return BedrockConverseModel(model_type=llm_model, api_key=llm_api_key, region=region)
         
         # Set environment variables required by camel-ai
         if llm_api_key:
@@ -480,6 +496,7 @@ class RedditSimulationRunner:
             self.config.get("time_config", {}),
             self.config.get("agent_configs", []),
             current_hour,
+            rng=self.activation_rng,
         )
         
         active_agents = []

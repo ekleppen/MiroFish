@@ -58,3 +58,8 @@ backend/uploads/
 
 # Docker 数据
 data/
+
+# Sampling / warehouse data
+*.csv
+*.xlsx
+mirofish_guest_pipeline*/out/

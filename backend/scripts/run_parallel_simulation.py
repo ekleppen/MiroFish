@@ -156,7 +156,13 @@ def init_logging_for_simulation(simulation_dir: str):
 
 
 from action_logger import SimulationLogManager, PlatformActionLogger
-from round_schedule import build_round_schedule, full_round_count, select_active_agent_ids
+from round_schedule import (
+    build_round_schedule,
+    full_round_count,
+    make_activation_rng,
+    select_active_agent_ids,
+)
+from bedrock_converse import is_bedrock_provider, resolve_region
 
 try:
     from camel.models import ModelFactory
@@ -1008,17 +1014,28 @@ def create_model(config: Dict[str, Any], use_boost: bool = False):
         llm_api_key = boost_api_key
         llm_base_url = boost_base_url
         llm_model = boost_model or os.environ.get("LLM_MODEL_NAME", "")
+        llm_provider = os.environ.get("LLM_BOOST_PROVIDER") or os.environ.get("LLM_PROVIDER", "")
         config_label = "[Boost LLM]"
     else:
         # Use the general config
         llm_api_key = os.environ.get("LLM_API_KEY", "")
         llm_base_url = os.environ.get("LLM_BASE_URL", "")
         llm_model = os.environ.get("LLM_MODEL_NAME", "")
+        llm_provider = os.environ.get("LLM_PROVIDER", "")
         config_label = "[General LLM]"
     
     # Fall back to config if no model name is set in .env
     if not llm_model:
         llm_model = config.get("llm_model", "gpt-4o-mini")
+
+    if is_bedrock_provider(llm_provider):
+        if not llm_api_key:
+            raise ValueError("Missing API key configuration. Set LLM_API_KEY in the .env file at the project root.")
+        from camel_bedrock_model import BedrockConverseModel
+
+        region = resolve_region()
+        print(f"{config_label} provider=bedrock model={llm_model}, region={region}")
+        return BedrockConverseModel(model_type=llm_model, api_key=llm_api_key, region=region)
     
     # Set environment variables required by camel-ai
     if llm_api_key:
@@ -1042,13 +1059,15 @@ def get_active_agents_for_round(
     env,
     config: Dict[str, Any],
     current_hour: int,
-    round_num: int
+    round_num: int,
+    rng: Optional[random.Random] = None,
 ) -> List:
     """Decide which Agents to activate this round based on time and config"""
     selected_ids = select_active_agent_ids(
         config.get("time_config", {}),
         config.get("agent_configs", []),
         current_hour,
+        rng=rng,
     )
     
     active_agents = []
@@ -1196,6 +1215,7 @@ async def run_twitter_simulation(
         )
     
     start_time = datetime.now()
+    activation_rng = make_activation_rng(config)
     
     for slot in schedule:
         round_num = slot["round_num"]
@@ -1214,7 +1234,7 @@ async def run_twitter_simulation(
         clock = f"Day {simulated_day}, {simulated_hour:02d}:00"
         
         active_agents = get_active_agents_for_round(
-            result.env, config, simulated_hour, round_num
+            result.env, config, simulated_hour, round_num, rng=activation_rng
         )
         
         # Log round start regardless of whether any agents are active
@@ -1412,6 +1432,7 @@ async def run_reddit_simulation(
         )
     
     start_time = datetime.now()
+    activation_rng = make_activation_rng(config)
     
     for slot in schedule:
         round_num = slot["round_num"]
@@ -1430,7 +1451,7 @@ async def run_reddit_simulation(
         clock = f"Day {simulated_day}, {simulated_hour:02d}:00"
         
         active_agents = get_active_agents_for_round(
-            result.env, config, simulated_hour, round_num
+            result.env, config, simulated_hour, round_num, rng=activation_rng
         )
         
         # Log round start regardless of whether any agents are active

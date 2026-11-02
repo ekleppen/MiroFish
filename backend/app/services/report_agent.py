@@ -32,6 +32,81 @@ from .zep_tools import (
 
 logger = get_logger('mirofish.report_agent')
 
+SIMULATION_ACTIVITY_DEFAULT_LIMIT = 30
+SIMULATION_ACTIVITY_MAX_LIMIT = 100
+_ACTIVITY_TEXT_CHARS = 280
+
+
+def summarize_simulation_activity(
+    sim_dir: str,
+    *,
+    keyword: str = "",
+    agent: str = "",
+    platform: str = "",
+    limit: int = SIMULATION_ACTIVITY_DEFAULT_LIMIT,
+) -> str:
+    """Summarize agent actions from a simulation's local action logs.
+
+    Reads <sim_dir>/<platform>/actions.jsonl directly, so reports can cite
+    what agents did whether or not those actions were written to Zep.
+    """
+    limit = max(1, min(int(limit or SIMULATION_ACTIVITY_DEFAULT_LIMIT), SIMULATION_ACTIVITY_MAX_LIMIT))
+    keyword = (keyword or "").strip().lower()
+    agent = (agent or "").strip().lower()
+    platform = (platform or "").strip().lower()
+    platforms = [p for p in ("twitter", "reddit") if not platform or p == platform]
+
+    counts: Dict[str, Dict[str, int]] = {}
+    matches: List[str] = []
+    total_matches = 0
+    for name in platforms:
+        log_path = os.path.join(sim_dir, name, "actions.jsonl")
+        if not os.path.exists(log_path):
+            continue
+        with open(log_path, "r", encoding="utf-8") as log_file:
+            for line in log_file:
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if "event_type" in record or record.get("success") is False:
+                    continue
+                action_type = str(record.get("action_type") or "UNKNOWN")
+                if action_type == "DO_NOTHING":
+                    continue
+                agent_name = str(record.get("agent_name") or f"agent_{record.get('agent_id')}")
+                args = record.get("action_args") or {}
+                args_text = json.dumps(args, ensure_ascii=False)
+                if agent and agent not in agent_name.lower():
+                    continue
+                if keyword and keyword not in args_text.lower() and keyword not in agent_name.lower():
+                    continue
+
+                platform_counts = counts.setdefault(name, {})
+                platform_counts[action_type] = platform_counts.get(action_type, 0) + 1
+                total_matches += 1
+                if len(matches) < limit:
+                    detail = args.get("content") if isinstance(args, dict) else None
+                    detail = str(detail) if detail else args_text
+                    if len(detail) > _ACTIVITY_TEXT_CHARS:
+                        detail = detail[:_ACTIVITY_TEXT_CHARS] + "..."
+                    matches.append(
+                        f"[{name} round {record.get('round', '?')}] {agent_name} {action_type}: {detail}"
+                    )
+
+    if not total_matches:
+        return localized("没有找到符合条件的模拟动作。", "No matching simulation actions were found.")
+
+    lines = [localized(f"匹配的模拟动作: {total_matches} 条", f"Matching simulation actions: {total_matches}")]
+    for name, platform_counts in counts.items():
+        summary = ", ".join(f"{k}={v}" for k, v in sorted(platform_counts.items(), key=lambda kv: -kv[1]))
+        lines.append(f"- {name}: {summary}")
+    lines.append(
+        localized(f"前 {len(matches)} 条:", f"First {len(matches)}:")
+    )
+    lines.extend(matches)
+    return "\n".join(lines)
+
 
 class ReportLogger:
     """
@@ -567,6 +642,32 @@ A lightweight, fast retrieval tool suited to simple, direct information queries.
 [Returns]
 - A list of the facts most relevant to the query"""
 
+TOOL_DESC_SIMULATION_ACTIVITY = """\
+【模拟动作记录 - 原始行为数据】
+直接读取本次模拟的动作日志（发帖、评论、点赞、转发、关注等）。
+
+【使用场景】
+- 需要引用Agent实际发布的内容或具体行为
+- 需要统计各类动作的数量
+- 按关键词、Agent或平台筛选行为
+
+【返回内容】
+- 各平台的动作类型统计
+- 匹配的动作列表（轮次、Agent、动作类型、内容）"""
+
+TOOL_DESC_SIMULATION_ACTIVITY_EN = """\
+[Simulation Activity - Raw Agent Actions]
+Reads this simulation's action logs directly (posts, comments, likes, reposts, follows, etc.).
+
+[Use Cases]
+- You need to quote what agents actually posted or did
+- You need counts of each kind of action
+- Filter behavior by keyword, agent, or platform
+
+[Returns]
+- Action-type counts per platform
+- Matching actions (round, agent, action type, content)"""
+
 TOOL_DESC_INTERVIEW_AGENTS = """\
 【深度采访 - 真实Agent采访（双平台）】
 调用OASIS模拟环境的采访API，对正在运行的模拟Agent进行真实采访！
@@ -853,6 +954,7 @@ SECTION_SYSTEM_PROMPT_TEMPLATE = """\
 - insight_forge: 深度洞察分析，自动分解问题并多维度检索事实和关系
 - panorama_search: 广角全景搜索，了解事件全貌、时间线和演变过程
 - quick_search: 快速验证某个具体信息点
+- simulation_activity: 读取模拟中Agent的真实动作与发帖内容，用于引用和统计
 - interview_agents: 采访模拟Agent，获取不同角色的第一人称观点和真实反应
 
 ═══════════════════════════════════════════════════════════════
@@ -1013,6 +1115,7 @@ This section analyzes...
 - insight_forge: Deep insight analysis; automatically breaks the question down and retrieves facts and relationships across multiple dimensions
 - panorama_search: Wide-angle panoramic search; understand the full picture, timeline, and evolution of the event
 - quick_search: Quickly verify a specific piece of information
+- simulation_activity: Read the agents' actual actions and posts from the simulation, for quotes and counts
 - interview_agents: Interview simulated agents to obtain first-person views and genuine reactions from different roles
 
 ═══════════════════════════════════════════════════════════════
@@ -1336,6 +1439,19 @@ class ReportAgent:
                     "limit": localized("返回结果数量（可选，默认10）", "Number of results to return (optional, default 10)")
                 }
             },
+            "simulation_activity": {
+                "name": "simulation_activity",
+                "description": localized(TOOL_DESC_SIMULATION_ACTIVITY, TOOL_DESC_SIMULATION_ACTIVITY_EN),
+                "parameters": {
+                    "keyword": localized("在动作内容中搜索的关键词（可选）", "Keyword to search for in action content (optional)"),
+                    "agent": localized("Agent名称（可选，部分匹配）", "Agent name (optional, partial match)"),
+                    "platform": localized("twitter 或 reddit（可选）", "twitter or reddit (optional)"),
+                    "limit": localized(
+                        f"返回动作数量（可选，默认{SIMULATION_ACTIVITY_DEFAULT_LIMIT}，最大{SIMULATION_ACTIVITY_MAX_LIMIT}）",
+                        f"Number of actions to return (optional, default {SIMULATION_ACTIVITY_DEFAULT_LIMIT}, max {SIMULATION_ACTIVITY_MAX_LIMIT})",
+                    ),
+                }
+            },
             "interview_agents": {
                 "name": "interview_agents",
                 "description": localized(TOOL_DESC_INTERVIEW_AGENTS, TOOL_DESC_INTERVIEW_AGENTS_EN),
@@ -1403,6 +1519,20 @@ class ReportAgent:
                     limit=limit
                 )
                 return result.to_text()
+
+            elif tool_name == "simulation_activity":
+                limit = parameters.get("limit", SIMULATION_ACTIVITY_DEFAULT_LIMIT)
+                try:
+                    limit = int(limit)
+                except (TypeError, ValueError):
+                    limit = SIMULATION_ACTIVITY_DEFAULT_LIMIT
+                return summarize_simulation_activity(
+                    os.path.join(Config.OASIS_SIMULATION_DATA_DIR, self.simulation_id),
+                    keyword=str(parameters.get("keyword") or parameters.get("query") or ""),
+                    agent=str(parameters.get("agent") or ""),
+                    platform=str(parameters.get("platform") or ""),
+                    limit=limit,
+                )
             
             elif tool_name == "interview_agents":
                 # In-depth interview - call the real OASIS interview API to get simulated agents' answers (both platforms)
@@ -1464,7 +1594,7 @@ class ReportAgent:
             return localized(f"工具执行失败: {str(e)}", f"Tool execution failed: {str(e)}")
     
     # Set of valid tool names, used for validation in the bare-JSON fallback parsing
-    VALID_TOOL_NAMES = {"insight_forge", "panorama_search", "quick_search", "interview_agents"}
+    VALID_TOOL_NAMES = {"insight_forge", "panorama_search", "quick_search", "simulation_activity", "interview_agents"}
 
     def _parse_tool_calls(self, response: str) -> List[Dict[str, Any]]:
         """
@@ -1723,7 +1853,7 @@ class ReportAgent:
         min_tool_calls = 3  # Min tool calls
         conflict_retries = 0  # Consecutive conflicts where a tool call and Final Answer appear together
         used_tools = set()  # Names of tools already called
-        all_tools = {"insight_forge", "panorama_search", "quick_search", "interview_agents"}
+        all_tools = set(self.VALID_TOOL_NAMES)
 
         # Report context, used for InsightForge sub-question generation
         report_context = localized(

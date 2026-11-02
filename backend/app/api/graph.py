@@ -26,6 +26,7 @@ from ..services.simulation_manager import SimulationManager
 from ..services.simulation_runner import SimulationRunner, RunnerStatus
 from ..services.zep_graph_memory_updater import ZepGraphMemoryManager
 from ..utils.llm_client import LLMResponseError
+from scripts.bedrock_converse import BedrockAPIError
 
 # Get logger
 logger = get_logger('mirofish.api')
@@ -404,6 +405,9 @@ def generate_ontology():
                 public_error = t('api.llmAuthFailed', status=provider_status)
             else:
                 public_error = f"LLM provider request failed (HTTP {provider_status})"
+            # BedrockAPIError text carries only AWS's configuration message, never request content
+            if isinstance(error, BedrockAPIError):
+                public_error += f": {error}"
             if request_id:
                 safe_request_id = re.sub(
                     r"[^a-zA-Z0-9._:-]", "", str(request_id)
@@ -414,10 +418,11 @@ def generate_ontology():
             # Provider exception bodies may echo request content. Keep the
             # server log useful without serializing the exception body.
             logger.error(
-                "Ontology provider request failed: type=%s status=%s request_id=%s",
+                "Ontology provider request failed: type=%s status=%s request_id=%s%s",
                 type(error).__name__,
                 provider_status,
                 request_id or "unknown",
+                f" detail={error}" if isinstance(error, BedrockAPIError) else "",
             )
         else:
             public_error = "Ontology generation failed; check the server logs"
@@ -468,8 +473,8 @@ def _build_graph_impl():
         {
             "project_id": "proj_xxxx",  // required, from Endpoint 1
             "graph_name": "Graph name",  // optional
-            "chunk_size": 500,          // optional, default 500
-            "chunk_overlap": 50         // optional, default 50
+            "chunk_size": 2000,         // optional, default 2000 (projects keep the value they were built with)
+            "chunk_overlap": 200        // optional, default 200
         }
         
     Returns:

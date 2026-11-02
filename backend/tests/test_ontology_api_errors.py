@@ -91,3 +91,33 @@ def test_ontology_api_keeps_generic_message_for_non_auth_provider_errors(
 
     assert response.status_code == 502
     assert response.json["error"] == "LLM provider request failed (HTTP 429)"
+
+
+def test_ontology_api_shows_bedrock_validation_detail(tmp_path, monkeypatch):
+    from botocore.exceptions import ClientError
+
+    from scripts.bedrock_converse import translate_client_error
+
+    error = translate_client_error(ClientError(
+        {
+            "Error": {"Code": "ValidationException", "Message": "The provided model identifier is invalid."},
+            "ResponseMetadata": {"HTTPStatusCode": 400, "RequestId": "a514e26a-1934"},
+        },
+        "Converse",
+    ))
+
+    class FailingGenerator:
+        def generate(self, **kwargs):
+            raise error
+
+    monkeypatch.setattr(ProjectManager, "PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr(graph_api, "OntologyGenerator", FailingGenerator)
+
+    app = create_app()
+    app.config.update(TESTING=True)
+    response = _post_ontology(app.test_client())
+
+    assert response.status_code == 502
+    assert "HTTP 400" in response.json["error"]
+    assert "model identifier is invalid" in response.json["error"]
+    assert "a514e26a-1934" in response.json["error"]

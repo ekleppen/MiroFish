@@ -64,6 +64,27 @@ def test_chat_json_retries_truncated_completion_without_token_cap():
     assert "max_tokens" not in sequence.calls[1]
 
 
+@pytest.mark.parametrize("is_bedrock, expected", [(True, "low"), (False, None)])
+def test_reasoning_effort_is_forwarded_only_on_bedrock(is_bedrock, expected):
+    sequence = CompletionSequence(_response('{"ok": true}'))
+    client = _client_for(sequence)
+    client.is_bedrock = is_bedrock
+
+    client.chat_json(messages=[{"role": "user", "content": "Return JSON"}],
+                     reasoning_effort="low")
+
+    assert sequence.calls[0].get("reasoning_effort") == expected
+
+
+def test_truncation_error_reports_output_tokens():
+    response = _response('{"items": [', finish_reason="length")
+    response.usage = SimpleNamespace(completion_tokens=400)
+    client = _client_for(CompletionSequence(response))
+
+    with pytest.raises(LLMResponseError, match=r"\(400 output tokens\)"):
+        client.chat_json(messages=[{"role": "user", "content": "Return JSON"}])
+
+
 def test_chat_json_omits_token_cap_when_requested():
     sequence = CompletionSequence(_response('{"ok": true}'))
     client = _client_for(sequence)

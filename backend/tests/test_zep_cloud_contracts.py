@@ -433,6 +433,51 @@ def test_batch_wait_times_out_while_status_remains_nonterminal(monkeypatch):
         )
 
 
+def test_batch_wait_keeps_going_while_items_complete(monkeypatch):
+    # Each poll is 8s apart and completes one more item; total time (24s)
+    # exceeds the 10s stall window, but no single gap does.
+    polls = iter([
+        SimpleNamespace(status="processing", progress=SimpleNamespace(percent_complete=0, succeeded_items=0)),
+        SimpleNamespace(status="processing", progress=SimpleNamespace(percent_complete=33, succeeded_items=1)),
+        SimpleNamespace(status="processing", progress=SimpleNamespace(percent_complete=66, succeeded_items=2)),
+        SimpleNamespace(status="succeeded", progress=SimpleNamespace(percent_complete=100, succeeded_items=3)),
+    ])
+    items = [
+        SimpleNamespace(sequence_index=i, status="succeeded", episode_uuid=f"ep-{i}", source_uuid=f"ep-{i}")
+        for i in range(3)
+    ]
+    builder = object.__new__(GraphBuilderService)
+    builder.client = SimpleNamespace(
+        batch=SimpleNamespace(
+            get=lambda **_kwargs: next(polls),
+            list_items=lambda **_kwargs: SimpleNamespace(items=items, next_cursor=None),
+        )
+    )
+    timestamps = iter([0.0, 0.0, 8.0, 16.0, 24.0])
+    monkeypatch.setattr(graph_builder_module, "logger", SimpleNamespace(info=lambda *_args: None))
+    monkeypatch.setattr(graph_builder_module.time, "time", lambda: next(timestamps))
+    monkeypatch.setattr(graph_builder_module.time, "sleep", lambda _seconds: None)
+
+    assert builder._wait_for_batch(BatchSubmission("batch-1", "operation", [], 3), timeout=10) == [
+        "ep-0",
+        "ep-1",
+        "ep-2",
+    ]
+
+
+def test_batch_wait_times_out_when_progress_stalls(monkeypatch):
+    stalled = SimpleNamespace(status="processing", progress=SimpleNamespace(percent_complete=50, succeeded_items=1))
+    builder = object.__new__(GraphBuilderService)
+    builder.client = SimpleNamespace(batch=SimpleNamespace(get=lambda **_kwargs: stalled))
+    timestamps = iter([0.0, 0.0, 5.0, 11.0])
+    monkeypatch.setattr(graph_builder_module, "logger", SimpleNamespace(info=lambda *_args: None))
+    monkeypatch.setattr(graph_builder_module.time, "time", lambda: next(timestamps))
+    monkeypatch.setattr(graph_builder_module.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(TimeoutError, match=r"1/2 items done after 11s, no progress for 11s"):
+        builder._wait_for_batch(BatchSubmission("batch-1", "operation", [], 2), timeout=10)
+
+
 def test_installed_sdk_serializes_the_batch_325_contract():
     requests = []
 
